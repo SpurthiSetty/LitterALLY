@@ -1,10 +1,17 @@
+import os
 import queue
 
 from arduino.app_utils import App, Bridge
 
-import vision
 from rules import Rules
 from store import EventStore
+
+if os.environ.get("SMARTBIN_FAKE_VISION"):
+    import fake_vision as vision
+
+    print("[bin] SMARTBIN_FAKE_VISION set, using the stand-in classifier")
+else:
+    import vision
 
 _rules = Rules()
 _store = EventStore()
@@ -26,15 +33,9 @@ def on_trigger():
 Bridge.provide("on_trigger", on_trigger)
 
 
-def _classify():
-    frame = vision.capture()
-    if frame is None:
-        return vision.UNKNOWN_LABEL, 0.0
-    return vision.classify(frame)
-
-
 def _handle_trigger():
-    label, confidence = _classify()
+    # The backend owns the no-frame case, so a missing camera is its policy.
+    label, confidence = vision.classify(vision.capture())
     category = _rules.resolve(label, confidence)
 
     _store.log(label, confidence, category)

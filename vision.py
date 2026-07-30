@@ -1,11 +1,29 @@
+import glob
+import os
+import re
+
 import cv2
 
 UNKNOWN_LABEL = "unknown"
 
-# The USB webcam lands on /dev/video2 on this board; the rest are fallbacks.
-_CAMERA_INDICES = (2, 0, 1, 4)
-
 _camera = None
+
+
+def _candidate_indices():
+    # Enumerate what actually exists rather than hardcoding, since USB
+    # enumeration order is not stable across reboots. On this board the webcam
+    # is /dev/video2; the lower nodes open fine but are ISP/metadata devices
+    # that never yield a frame, so try 2 first and fall back in order.
+    found = sorted(
+        int(match.group(1))
+        for match in (re.search(r"(\d+)$", path) for path in glob.glob("/dev/video*"))
+        if match
+    )
+    preferred = os.environ.get("SMARTBIN_CAMERA_INDEX")
+    if preferred is not None:
+        index = int(preferred)
+        return [index] + [i for i in found if i != index]
+    return sorted(found, key=lambda i: (i != 2, i))
 
 
 def _ensure_camera():
@@ -13,18 +31,28 @@ def _ensure_camera():
     if _camera is not None and _camera.isOpened():
         return _camera
 
-    for index in _CAMERA_INDICES:
+    for index in _candidate_indices():
         candidate = cv2.VideoCapture(index)
         if candidate.isOpened():
             ok, frame = candidate.read()
             if ok and frame is not None:
-                print(f"[vision] USB webcam ready at index {index}")
+                height, width = frame.shape[:2]
+                print(f"[vision] webcam ready at index {index}, {width}x{height}")
                 _camera = candidate
                 return _camera
         candidate.release()
 
-    print("[vision] no USB webcam found")
+    print("[vision] no usable webcam found")
     return None
+
+
+def release():
+    # V4L2 allows a single opener, so the handle has to be freed explicitly
+    # rather than left to garbage collection.
+    global _camera
+    if _camera is not None:
+        _camera.release()
+        _camera = None
 
 
 def capture():
@@ -39,4 +67,9 @@ def classify(frame):
     # Task 1 seam: replace with the real classifier. Returning a zero-confidence
     # label keeps the trigger path exercisable end to end until then, because the
     # rules engine resolves anything under the confidence floor to "unknown".
+    #
+    # frame may be None when the camera is missing or a read failed, so the real
+    # classifier has to handle that case rather than assume an array.
+    if frame is None:
+        return UNKNOWN_LABEL, 0.0
     return UNKNOWN_LABEL, 0.0
