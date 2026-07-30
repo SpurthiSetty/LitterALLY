@@ -1,0 +1,59 @@
+# Disposal policy. Remapping a label to a different category here needs no retraining.
+#
+# The category names are a contract with the MCU: sketch.ino has its own
+# category -> colour/tone table, so adding a category here means adding it there too.
+# Any label the classifier emits that is missing below resolves to "unknown".
+
+min_confidence: 0.55
+
+categories:
+  recycle:
+    labels:
+      - plastic_bottle
+      - glass_bottle
+      - aluminium_can
+      - tin_can
+      - cardboard
+      - paper
+      - newspaper
+      - magazine
+      - carton
+
+  compost:
+    labels:
+      - food_scraps
+      - fruit_peel
+      - vegetable_peel
+      - coffee_grounds
+      - tea_bag
+      - eggshell
+      - paper_towel
+
+  trash:
+    labels:
+      - plastic_bag
+      - plastic_wrap
+      - styrofoam
+      - chip_packet
+      - cigarette_butt
+      - broken_ceramic
+
+  hazardous:
+    labels:
+      - battery
+      - paint_can
+      - aerosol_can
+      - light_bulb
+      - fluorescent_tube
+      - motor_oil
+      - medication
+
+  ewaste:
+    labels:
+      - phone
+      - laptop
+      - cable
+      - charger
+      - headphones
+      - circuit_board
+      - remote_control

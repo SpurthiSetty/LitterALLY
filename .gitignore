@@ -1,0 +1,6 @@
+__pycache__/
+*.py[cod]
+
+# Runtime event store; EventStore creates this next to store.py by default.
+*.db
+smartbin.db
