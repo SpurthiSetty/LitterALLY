@@ -10,7 +10,6 @@
 
 ModulinoDistance distance;
 ModulinoBuzzer buzzer;
-ModulinoPixels pixels;
 
 const int MIN_DEADZONE_MM = 20;               // optical floor of the ToF sensor
 const int DIST_THRESHOLD_MM = 250;            // an item this close counts as presented
@@ -19,24 +18,25 @@ const unsigned long POLL_INTERVAL_MS = 100;   // 10 Hz
 const unsigned long FEEDBACK_TIMEOUT_MS = 4000;
 const unsigned long RESULT_HOLD_MS = 5000;    // how long the result stays lit
 
-const uint8_t PIXEL_COUNT = 8;
-const uint8_t PIXEL_BRIGHTNESS = 25;
-
 // Categories must match the keys in disposal_rules.yaml. Colour and tone live
 // here, not in the rules file, because the MCU decides how things are displayed.
+//
+// There is no Modulino Pixels on this build, so the colour signal goes to the
+// two onboard RGB LEDs instead. That allows only one bit per channel, which is
+// still enough for six distinguishable colours - one per category.
 struct CategoryStyle {
   const char* name;
-  uint8_t r, g, b;
+  bool r, g, b;
   unsigned int tone;
 };
 
 const CategoryStyle STYLES[] = {
-  {"recycle",     0,  80, 255,  880},
-  {"compost",     0, 200,  40,  660},
-  {"trash",     140, 140, 140,  440},
-  {"hazardous", 255,  40,   0, 1320},
-  {"ewaste",    200,   0, 255, 1100},
-  {"unknown",    60,  45,   0,  220},
+  {"recycle",   false, false, true,   880},  // blue
+  {"compost",   false, true,  false,  660},  // green
+  {"trash",     true,  true,  true,   440},  // white
+  {"hazardous", true,  false, false, 1320},  // red
+  {"ewaste",    true,  false, true,  1100},  // magenta
+  {"unknown",   true,  true,  false,  220},  // yellow
 };
 const size_t STYLE_COUNT = sizeof(STYLES) / sizeof(STYLES[0]);
 const size_t UNKNOWN_STYLE = STYLE_COUNT - 1;
@@ -53,8 +53,8 @@ bool mpuReady = false;
 bool feedbackPending = false;
 String pendingCategory = "unknown";
 
-// Bridge handlers only record what arrived; loop() drives the Qwiic devices so
-// that the bus is never touched from two contexts at once.
+// Bridge handlers only record what arrived; loop() drives the hardware so that
+// neither the Qwiic bus nor the LEDs are touched from two contexts at once.
 void set_feedback(String category) {
   pendingCategory = category;
   feedbackPending = true;
@@ -62,6 +62,20 @@ void set_feedback(String category) {
 
 void mpu_ready() {
   mpuReady = true;
+}
+
+void setLeds(bool r, bool g, bool b) {
+  // The onboard RGB LEDs are active low: LOW lights a channel.
+  digitalWrite(LED3_R, r ? LOW : HIGH);
+  digitalWrite(LED3_G, g ? LOW : HIGH);
+  digitalWrite(LED3_B, b ? LOW : HIGH);
+  digitalWrite(LED4_R, r ? LOW : HIGH);
+  digitalWrite(LED4_G, g ? LOW : HIGH);
+  digitalWrite(LED4_B, b ? LOW : HIGH);
+}
+
+void clearLeds() {
+  setLeds(false, false, false);
 }
 
 const CategoryStyle& styleFor(const String& name) {
@@ -75,19 +89,11 @@ const CategoryStyle& styleFor(const String& name) {
 
 void showCategory(const String& name) {
   const CategoryStyle& style = styleFor(name);
-  for (uint8_t i = 0; i < PIXEL_COUNT; i++) {
-    pixels.set(i, ModulinoColor(style.r, style.g, style.b), PIXEL_BRIGHTNESS);
-  }
-  pixels.show();
+  setLeds(style.r, style.g, style.b);
   buzzer.tone(style.tone, 200);
 
   Monitor.print(">>> category: ");
   Monitor.println(name);
-}
-
-void clearPixels() {
-  pixels.clear();
-  pixels.show();
 }
 
 void setup() {
@@ -95,11 +101,17 @@ void setup() {
   Monitor.begin();
   delay(1000);
 
+  pinMode(LED3_R, OUTPUT);
+  pinMode(LED3_G, OUTPUT);
+  pinMode(LED3_B, OUTPUT);
+  pinMode(LED4_R, OUTPUT);
+  pinMode(LED4_G, OUTPUT);
+  pinMode(LED4_B, OUTPUT);
+  clearLeds();
+
   Modulino.begin();
   distance.begin();
   buzzer.begin();
-  pixels.begin();
-  clearPixels();
 
   Bridge.provide_safe("set_feedback", set_feedback);
   Bridge.provide_safe("mpu_ready", mpu_ready);
@@ -129,7 +141,7 @@ void loop() {
   }
 
   if (state == SHOWING && now - resultShownTime >= RESULT_HOLD_MS) {
-    clearPixels();
+    clearLeds();
     state = IDLE;
   }
 

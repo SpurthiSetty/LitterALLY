@@ -6,6 +6,12 @@ import cv2
 
 UNKNOWN_LABEL = "unknown"
 
+# A freshly opened USB webcam returns black frames until auto-exposure settles,
+# and V4L2 hands back whatever is sitting in its buffer, which between triggers
+# is stale. Both cost frames rather than accuracy, so discard generously.
+_WARMUP_FRAMES = 10
+_FLUSH_FRAMES = 5
+
 _camera = None
 
 
@@ -37,6 +43,8 @@ def _ensure_camera():
             ok, frame = candidate.read()
             if ok and frame is not None:
                 height, width = frame.shape[:2]
+                for _ in range(_WARMUP_FRAMES):
+                    candidate.read()
                 print(f"[vision] webcam ready at index {index}, {width}x{height}")
                 _camera = candidate
                 return _camera
@@ -59,6 +67,12 @@ def capture():
     camera = _ensure_camera()
     if camera is None:
         return None
+
+    # Drop whatever the driver has buffered so the frame reflects now, not the
+    # last time anyone looked.
+    for _ in range(_FLUSH_FRAMES):
+        camera.grab()
+
     ok, frame = camera.read()
     return frame if ok else None
 

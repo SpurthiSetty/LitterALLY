@@ -15,7 +15,10 @@ ssh "$HOST" "mkdir -p ~/$DEST"
 # Never ship .cache: it holds the sketch build artifacts (~490 MB) and lives
 # only on the board. Never ship captures or the event store either - they are
 # runtime output, and copying stale ones over would be misleading.
-tar cf - \
+# COPYFILE_DISABLE stops macOS tar emitting AppleDouble ._* sidecar files,
+# which would otherwise land next to every source file on the board.
+COPYFILE_DISABLE=1 tar cf - \
+    --exclude='._*' \
     --exclude='.git' \
     --exclude='.cache' \
     --exclude='__pycache__' \
