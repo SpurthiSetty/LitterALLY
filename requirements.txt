@@ -1,4 +1,0 @@
-# opencv is deliberately not listed: cv2 is already present in the App Lab
-# container (the camera spike ran without a requirements file), and asking pip
-# for it can trigger a slow source build on aarch64.
-pyyaml

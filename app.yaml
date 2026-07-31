@@ -1,0 +1,5 @@
+name: SmartBin
+description: "Orchestrator: sensor trigger -> capture -> classify -> rules -> lights"
+ports: []
+bricks: []
+icon: 🗑️

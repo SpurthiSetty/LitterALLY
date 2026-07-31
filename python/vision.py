@@ -10,10 +10,10 @@ _camera = None
 
 
 def _candidate_indices():
-    # Enumerate what actually exists rather than hardcoding, since USB
-    # enumeration order is not stable across reboots. On this board the webcam
-    # is /dev/video2; the lower nodes open fine but are ISP/metadata devices
-    # that never yield a frame, so try 2 first and fall back in order.
+    # Enumerate what actually exists rather than hardcoding: the webcam was
+    # /dev/video2 one boot and /dev/video0 the next, so USB enumeration order
+    # cannot be relied on. The other nodes are ISP/metadata devices that open
+    # fine but never yield a frame, which the read test below filters out.
     found = sorted(
         int(match.group(1))
         for match in (re.search(r"(\d+)$", path) for path in glob.glob("/dev/video*"))
@@ -23,7 +23,7 @@ def _candidate_indices():
     if preferred is not None:
         index = int(preferred)
         return [index] + [i for i in found if i != index]
-    return sorted(found, key=lambda i: (i != 2, i))
+    return found
 
 
 def _ensure_camera():

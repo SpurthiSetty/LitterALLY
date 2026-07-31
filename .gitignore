@@ -4,3 +4,9 @@ __pycache__/
 # Runtime event store; EventStore creates this next to store.py by default.
 *.db
 smartbin.db
+
+# Frames written on every trigger. Useful on the board, not in git.
+python/captures/
+
+# App Lab sketch build artifacts (~490 MB on the board).
+.cache/
