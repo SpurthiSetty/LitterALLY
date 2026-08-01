@@ -25,7 +25,7 @@ COPYFILE_DISABLE=1 tar cf - \
     --exclude='*.pyc' \
     --exclude='*.db' \
     --exclude='captures' \
-    app.yaml requirement.txt python sketch \
+    app.yaml python sketch \
   | ssh "$HOST" "tar xf - -C ~/$DEST"
 
 echo "deployed to $HOST:~/$DEST"
