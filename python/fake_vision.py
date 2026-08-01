@@ -36,11 +36,11 @@ def _next_case():
     return case
 
 
-def capture(count=None):
+def capture(count=None, distance_mm=None):
     # Still exercises the real camera so bring-up covers it, but a missing
     # webcam must not stop the fake labels from flowing.
     try:
-        return vision.capture(count)
+        return vision.capture(count, distance_mm)
     except Exception as exc:
         print(f"[fake_vision] camera unavailable ({exc}), continuing without frames")
         return []

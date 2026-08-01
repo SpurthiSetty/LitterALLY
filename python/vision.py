@@ -16,7 +16,37 @@ _FLUSH_FRAMES = 5
 # into one verdict.
 BURST_FRAMES = int(os.environ.get("SMARTBIN_BURST", "3"))
 
+# Distance-proportional crop. Apparent size goes as 1/distance, so an item at
+# the far edge of the window covers roughly an eighth of the width it does at
+# the near edge. CROP_REF_MM is the distance at which an item is taken to fill
+# the frame; beyond it the crop tightens by the same ratio.
+#
+# The floor exists because the arithmetic alone would crop to ~12% at 250 mm,
+# which is 77x58 pixels upscaled to 224x224 - mostly interpolation artefacts.
+CROP_REF_MM = float(os.environ.get("SMARTBIN_CROP_REF_MM", "30"))
+CROP_MIN_FRACTION = float(os.environ.get("SMARTBIN_CROP_MIN", "0.25"))
+
 _camera = None
+
+
+def crop_for_distance(frame, distance_mm):
+    """Centre-crop a square whose size tracks how large the item should appear.
+
+    Square rather than rectangular on purpose: the model wants 224x224, and
+    resizing a 4:3 frame straight to square stretches everything by a third.
+    """
+    height, width = frame.shape[:2]
+
+    if not distance_mm or distance_mm <= 0:
+        fraction = 1.0
+    else:
+        fraction = max(CROP_MIN_FRACTION, min(1.0, CROP_REF_MM / float(distance_mm)))
+
+    side = max(32, int(min(height, width) * fraction))
+    top = max(0, (height - side) // 2)
+    left = max(0, (width - side) // 2)
+
+    return frame[top:top + side, left:left + side]
 
 
 def _candidate_indices():
@@ -58,8 +88,8 @@ def _ensure_camera():
     return None
 
 
-def capture(count=None):
-    """Grab a short burst of frames and return them as a list.
+def capture(count=None, distance_mm=None):
+    """Grab a short burst of frames, cropped for the reported distance.
 
     Several frames of the same item beat one, because a single frame can catch
     motion blur, a reflection, or an awkward angle. They are taken back to back
@@ -82,7 +112,11 @@ def capture(count=None):
     for _ in range(max(1, count)):
         ok, frame = camera.read()
         if ok and frame is not None:
-            frames.append(frame)
+            frames.append(crop_for_distance(frame, distance_mm))
+
+    if frames:
+        side = frames[0].shape[0]
+        print(f"[vision] {len(frames)} frame(s) at {distance_mm} mm, cropped to {side}x{side}")
 
     return frames
 

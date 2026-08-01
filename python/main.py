@@ -36,9 +36,10 @@ _store = EventStore()
 _triggers = queue.Queue(maxsize=1)
 
 
-def on_trigger():
+def on_trigger(distance_mm=0):
+    # The MCU sends how far the item was when it fired, which sizes the crop.
     try:
-        _triggers.put_nowait(True)
+        _triggers.put_nowait(int(distance_mm))
     except queue.Full:
         pass
     return True
@@ -62,9 +63,9 @@ def _save_capture(frames, label, category):
     return path
 
 
-def _handle_trigger():
+def _handle_trigger(distance_mm):
     # The backend owns the no-frame case, so a missing camera is its policy.
-    frames = vision.capture()
+    frames = vision.capture(distance_mm=distance_mm)
     label, confidence = vision.classify(frames)
     category = _rules.resolve(label, confidence)
 
@@ -90,11 +91,11 @@ def loop():
         print("[bin] announced mpu_ready, waiting for triggers")
 
     try:
-        _triggers.get(timeout=0.5)
+        distance_mm = _triggers.get(timeout=0.5)
     except queue.Empty:
         return
 
-    _handle_trigger()
+    _handle_trigger(distance_mm)
 
 
 App.run(user_loop=loop)

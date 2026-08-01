@@ -95,6 +95,7 @@ enum State { IDLE, ARMING, WAITING, SHOWING };
 
 State state = IDLE;
 bool itemPresent = false;
+int lastDistanceMm = 0;   // sent with on_trigger so the MPU can size its crop
 unsigned long lastPollTime = 0;
 unsigned long holdStartTime = 0;
 unsigned long triggerSentTime = 0;
@@ -223,6 +224,9 @@ void loop() {
     // poll instead of holding the previous state.
     int raw_mm = distance.get();
     itemPresent = (raw_mm >= MIN_DEADZONE_MM && raw_mm <= DIST_THRESHOLD_MM);
+    if (itemPresent) {
+      lastDistanceMm = raw_mm;
+    }
   }
 
   // The result stays lit while the item is still held, which is exactly when
@@ -249,10 +253,15 @@ void loop() {
       } else if (now - holdStartTime >= HOLD_TIME_MS) {
         buzzer.tone(1000, 300);
         if (mpuReady) {
-          Bridge.notify("on_trigger");
+          // The distance goes with the trigger: an item at arm's length fills
+          // far less of the frame than one held close, and the MPU uses this
+          // to crop proportionally.
+          Bridge.notify("on_trigger", lastDistanceMm);
           triggerSentTime = now;
           state = WAITING;
-          Monitor.println(">>> held 3s, asked Linux to classify");
+          Monitor.print(">>> held 3s at ");
+          Monitor.print(lastDistanceMm);
+          Monitor.println(" mm, asked Linux to classify");
         } else {
           Monitor.println(">>> held 3s, but Linux is not up yet");
           showCategory("unknown");
