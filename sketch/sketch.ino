@@ -16,12 +16,12 @@ Arduino_LED_Matrix matrix;
 const uint8_t MATRIX_WIDTH = 13;
 const uint8_t MATRIX_HEIGHT = 8;
 
-const int MIN_DEADZONE_MM = 20;               // optical floor of the ToF sensor
+const int MIN_DEADZONE_MM = 30;               // below 3 cm the ToF reading is unreliable
 const int DIST_THRESHOLD_MM = 250;            // an item this close counts as presented
 const unsigned long HOLD_TIME_MS = 3000;      // how long it must be held still
 const unsigned long POLL_INTERVAL_MS = 100;   // 10 Hz
 const unsigned long FEEDBACK_TIMEOUT_MS = 4000;
-const unsigned long RESULT_HOLD_MS = 5000;    // how long the result stays lit
+const unsigned long RESULT_HOLD_MS = 5000;    // minimum time the result stays lit
 
 // Categories must match the keys in disposal_rules.yaml. Colour and tone live
 // here, not in the rules file, because the MCU decides how things are displayed.
@@ -116,6 +116,7 @@ const char* const ICONS[][MATRIX_HEIGHT] = {
 enum State { IDLE, ARMING, WAITING, SHOWING };
 
 State state = IDLE;
+bool itemPresent = false;
 unsigned long lastPollTime = 0;
 unsigned long holdStartTime = 0;
 unsigned long triggerSentTime = 0;
@@ -232,30 +233,31 @@ void loop() {
     state = SHOWING;
   }
 
-  if (state == SHOWING && now - resultShownTime >= RESULT_HOLD_MS) {
-    clearDisplay();
-    state = IDLE;
-  }
-
   if (now - lastPollTime < POLL_INTERVAL_MS) {
     return;
   }
   lastPollTime = now;
 
-  if (!distance.available()) {
-    return;
+  if (distance.available()) {
+    // A reading of 0 means the sensor has no valid target. It falls outside the
+    // window on its own, so absence needs no special case - and treating it as
+    // absence rather than as noise means a withdrawn item is caught within one
+    // poll instead of holding the previous state.
+    int raw_mm = distance.get();
+    itemPresent = (raw_mm >= MIN_DEADZONE_MM && raw_mm <= DIST_THRESHOLD_MM);
   }
 
-  int raw_mm = distance.get();
-  if (raw_mm == 0) {
-    return;  // optical noise glitch, not a real reading
+  // The result stays lit while the item is still held, which is exactly when
+  // the user is deciding where to put it. Requiring withdrawal before clearing
+  // also stops one item being classified over and over.
+  if (state == SHOWING && now - resultShownTime >= RESULT_HOLD_MS && !itemPresent) {
+    clearDisplay();
+    state = IDLE;
   }
-
-  bool present = (raw_mm >= MIN_DEADZONE_MM && raw_mm <= DIST_THRESHOLD_MM);
 
   switch (state) {
     case IDLE:
-      if (present) {
+      if (itemPresent) {
         holdStartTime = now;
         state = ARMING;
         Monitor.println(">>> item detected, holding...");
@@ -263,11 +265,11 @@ void loop() {
       break;
 
     case ARMING:
-      if (!present) {
+      if (!itemPresent) {
         state = IDLE;
         Monitor.println("item withdrawn, resetting");
       } else if (now - holdStartTime >= HOLD_TIME_MS) {
-        buzzer.tone(1000, 150);
+        buzzer.tone(1000, 300);
         if (mpuReady) {
           Bridge.notify("on_trigger");
           triggerSentTime = now;
