@@ -5,7 +5,7 @@
 # policy can change without touching code and the MCU has one table to match.
 
 # Fallback default model if the caller does not specify one
-DEFAULT_MODEL_NAME = "mobilenet_imagenet"
+DEFAULT_MODEL_NAME = "wastenet_mobilenetv2"
 
 # How many frames a single classification is built from, and how their
 # predictions are combined. See classifier.classify_burst.

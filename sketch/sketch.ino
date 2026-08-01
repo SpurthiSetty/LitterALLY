@@ -62,25 +62,25 @@ const size_t UNKNOWN_STYLE = STYLE_COUNT - 1;
 // colours are hard to tell apart. Rows must stay MATRIX_WIDTH characters wide
 // and there must be MATRIX_HEIGHT of them; '#' lights a pixel.
 const char* const ICONS[][MATRIX_HEIGHT] = {
-  {  // recycle - a thick loop with an arrowhead on the right
-    "....#####....",
-    "..###...###..",
-    ".##.......##.",
-    "##.........##",
-    "##.......####",
-    ".##.......##.",
-    "..###...###..",
-    "....#####....",
+  {  // recycle - R
+    "..#######....",
+    "..##....##...",
+    "..##....##...",
+    "..#######....",
+    "..##..##.....",
+    "..##...##....",
+    "..##....##...",
+    "..##.....##..",
   },
-  {  // compost - a filled leaf with a stem
-    "........#####",
-    "......#######",
-    "....#########",
-    "..##########.",
-    ".#########...",
-    "#######......",
-    "..#..........",
-    ".#...........",
+  {  // compost - C
+    "...#######...",
+    "..##.....##..",
+    ".##..........",
+    ".##..........",
+    ".##..........",
+    ".##..........",
+    "..##.....##..",
+    "...#######...",
   },
   {  // trash - a bin
     "....#####....",
@@ -145,7 +145,7 @@ const int MAX_MISSES = 3;         // ~300 ms unusable before the item counts as 
 // Streams raw and filtered distance to the Linux log while an item is in play,
 // so the filter can be tuned against real sensor behaviour rather than guessed
 // at. Off costs nothing; on costs one notify per poll.
-const bool DEBUG_DISTANCE = true;
+const bool DEBUG_DISTANCE = false;
 
 float kx = 0.0f;                  // estimated distance, mm
 float kv = 0.0f;                  // estimated velocity, mm per tick
@@ -215,24 +215,25 @@ unsigned long resultShownTime = 0;
 
 bool mpuReady = false;
 bool feedbackPending = false;
-String pendingCategory = "unknown";
+size_t pendingStyle = UNKNOWN_STYLE;
 
-// Bridge handlers only record what arrived; loop() drives the hardware so that
-// neither the Qwiic bus nor the LEDs are touched from two contexts at once.
-void set_feedback(String category) {
-  pendingCategory = category;
+// The category arrives as an index into STYLES, not as its name. A String
+// parameter never reached this handler at all - the call timed out every time,
+// so the sketch fell back to its own timeout and showed unknown even when Linux
+// had answered confidently. Zero-argument handlers were fine, which is why the
+// mpu_ready handshake always worked and hid the problem.
+//
+// The index is the contract now, so STYLES order must match the list in
+// main.py.
+void set_feedback(int index) {
+  pendingStyle = (index >= 0 && (size_t)index < STYLE_COUNT)
+                     ? (size_t)index
+                     : UNKNOWN_STYLE;
   feedbackPending = true;
 }
 
 void mpu_ready() {
   mpuReady = true;
-}
-
-// Echoes a line from the Linux side onto the serial monitor. The classifier
-// runs on the MPU, so its per-frame output would otherwise only appear in the
-// Python console; this puts it beside the MCU's own state changes.
-void mcu_log(String line) {
-  Monitor.println(line);
 }
 
 void setLeds(bool r, bool g, bool b) {
@@ -264,17 +265,10 @@ void clearDisplay() {
   matrix.clear();
 }
 
-size_t styleIndexFor(const String& name) {
-  for (size_t i = 0; i < STYLE_COUNT; i++) {
-    if (name == STYLES[i].name) {
-      return i;
-    }
+void showStyle(size_t index) {
+  if (index >= STYLE_COUNT) {
+    index = UNKNOWN_STYLE;
   }
-  return UNKNOWN_STYLE;
-}
-
-void showCategory(const String& name) {
-  size_t index = styleIndexFor(name);
   const CategoryStyle& style = STYLES[index];
 
   setLeds(style.r, style.g, style.b);
@@ -282,7 +276,7 @@ void showCategory(const String& name) {
   buzzer.tone(style.tone, 200);
 
   Monitor.print(">>> category: ");
-  Monitor.println(name);
+  Monitor.println(style.name);
 }
 
 void setup() {
@@ -306,7 +300,7 @@ void setup() {
 
   Bridge.provide_safe("set_feedback", set_feedback);
   Bridge.provide_safe("mpu_ready", mpu_ready);
-  Bridge.provide_safe("mcu_log", mcu_log);
+
 
   Monitor.println("====================================");
   Monitor.println("  SMART BIN MCU READY               ");
@@ -319,7 +313,7 @@ void loop() {
   if (feedbackPending) {
     feedbackPending = false;
     if (state == WAITING) {
-      showCategory(pendingCategory);
+      showStyle(pendingStyle);
       resultShownTime = now;
       state = SHOWING;
     }
@@ -327,7 +321,7 @@ void loop() {
 
   if (state == WAITING && now - triggerSentTime >= FEEDBACK_TIMEOUT_MS) {
     Monitor.println(">>> no answer from Linux, showing unknown");
-    showCategory("unknown");
+    showStyle(UNKNOWN_STYLE);
     resultShownTime = now;
     state = SHOWING;
   }
@@ -420,7 +414,7 @@ void loop() {
           Monitor.println(" mm, asked Linux to classify");
         } else {
           Monitor.println(">>> held 3s, but Linux is not up yet");
-          showCategory("unknown");
+          showStyle(UNKNOWN_STYLE);
           resultShownTime = now;
           state = SHOWING;
         }

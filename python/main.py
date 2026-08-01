@@ -30,6 +30,18 @@ CAPTURE_DIR = Path(
 _rules = Rules()
 _store = EventStore()
 
+# Order is a contract with sketch.ino: the MCU indexes straight into its STYLES
+# table with what we send, so these must stay in the same order as that array.
+# Anything unrecognised maps to the last entry, unknown.
+_MCU_CATEGORIES = ("recycle", "compost", "trash", "hazardous", "ewaste", "unknown")
+
+
+def CATEGORY_INDEX(category):
+    try:
+        return _MCU_CATEGORIES.index(category)
+    except ValueError:
+        return len(_MCU_CATEGORIES) - 1
+
 # on_trigger has to return instantly, so it only hands the request to loop().
 # Depth of one: while a classification is in flight further trips are dropped
 # rather than queued, since a stale result is worse than none.
@@ -104,7 +116,19 @@ def _handle_trigger(distance_mm):
     where = f"saved {saved.name}" if saved else "no frames captured"
     print(f"[bin] {len(frames)} frame(s): {label} ({confidence:.2f}) -> {category}, {where}")
 
-    Bridge.call("set_feedback", category)
+    # Send the category as an index, not as its name. A String parameter never
+    # reached the MCU handler - every call timed out, so the sketch fell back to
+    # its own timeout and showed unknown even when the classifier was certain.
+    # Zero-argument handlers marshalled fine, which is why the mpu_ready
+    # handshake worked and masked this for so long.
+    #
+    # Short timeout because the MCU gives up after 4s anyway, and the try
+    # because an unreachable MCU must cost one result rather than the whole
+    # Linux side.
+    try:
+        Bridge.call("set_feedback", CATEGORY_INDEX(category), timeout=2)
+    except Exception as exc:
+        print(f"[bin] could not reach the MCU ({exc})")
 
 
 _announced = False

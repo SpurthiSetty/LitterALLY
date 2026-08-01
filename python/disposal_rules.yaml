@@ -1,114 +1,50 @@
 # Disposal policy. THE single source of truth for label -> category.
 #
-# Labels are ImageNet class names as emitted by mobilenet_imagenet, shortened to
-# the text before the first comma. ImageNet has a thousand classes and almost
-# all of them are irrelevant here - animals, vehicles, landscapes - so anything
-# not listed resolves to "unknown", which is the desired behaviour rather than a
-# gap: a photograph of a kitchen should not be assigned a bin.
-#
-# Two ImageNet names are traps and are placed by meaning, not by how they read:
-# "notebook" is a notebook computer and "mouse" is a computer mouse, so both are
-# e-waste rather than stationery.
+# Labels are the twelve classes the wastenet model emits, in the order given by
+# its labels.txt. A label the model never produces is dead weight; one it
+# produces that is missing here resolves to "unknown".
 #
 # Category names are a contract with the MCU: sketch.ino has a matching
 # category -> colour/icon/tone table, so a change here needs a change there.
+#
+# ImageNet MobileNet was tried here and reverted. It is more honest about empty
+# scenes, but a thousand general classes means most answers are off-topic -
+# "sewing machine" for a kitchen - which is unreadable when the point is to show
+# waste sorting. The trade is real either way: wastenet can see a battery and so
+# reaches hazardous, but has no class for a phone or a cable, so ewaste stays
+# unreachable.
 
-min_confidence: 0.25
+# Correct answers on real items have measured between 0.44 and 0.92, and empty
+# scenes between 0.30 and 0.60. A floor of 0.65 was rejecting correct answers
+# about half the time; 0.50 accepts them while still turning away most noise.
+min_confidence: 0.50
 
 categories:
   recycle:
     labels:
-      # glass and plastic containers
-      - beer bottle
-      - pop bottle
-      - water bottle
-      - wine bottle
-      - whiskey jug
-      - pill bottle
-      - water jug
-      - beer glass
-      - goblet
-      - vase
-      - bottlecap
-      # paper and card
-      - carton
-      - envelope
-      - packet
-      - binder
-      - book jacket
-      - paper towel
-      - toilet tissue
-      # metal
-      - milk can
-      - measuring cup
+      - cardboard
+      - paper
+      - plastic
+      - metal
+      - brown-glass
+      - green-glass
+      - white-glass
 
   compost:
     labels:
-      - banana
-      - orange
-      - lemon
-      - pineapple
-      - strawberry
-      - Granny Smith
-      - fig
-      - pomegranate
-      - custard apple
-      - jackfruit
-      - corn
-      - ear
-      - broccoli
-      - cauliflower
-      - zucchini
-      - cucumber
-      - artichoke
-      - bell pepper
-      - mushroom
-      - head cabbage
-      - bagel
-      - pretzel
-      - cheeseburger
-      - hotdog
-      - pizza
-      - mashed potato
+      - biological
 
   trash:
     labels:
-      - plastic bag
-      - lotion
-      - sunscreen
-      - soap dispenser
-      - Band Aid
-      - rubber eraser
+      - clothes
+      - shoes
+      - trash
 
   hazardous:
-    # ImageNet has no battery class, so nothing reaches hazardous with this
-    # model. The category stays defined so its colour and icon survive, and so
-    # a model that can see a battery needs a change only here.
-    labels: []
-
-  ewaste:
     labels:
-      - cellular telephone
-      - dial telephone
-      - laptop
-      - notebook
-      - desktop computer
-      - hand-held computer
-      - computer keyboard
-      - mouse
-      - space bar
-      - monitor
-      - printer
-      - projector
-      - modem
-      - hard disc
-      - iPod
-      - CD player
-      - cassette
-      - cassette player
-      - tape player
-      - radio
-      - remote control
-      - joystick
-      - loudspeaker
-      - microphone
+      - battery
+
+  # No wastenet label maps to e-waste. The category is kept so its colour and
+  # icon stay defined for a model that can see a phone or a cable.
+  ewaste:
+    labels: []

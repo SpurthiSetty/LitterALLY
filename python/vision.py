@@ -14,7 +14,7 @@ _FLUSH_FRAMES = 5
 
 # Frames per trigger. Override with SMARTBIN_BURST; the classifier combines them
 # into one verdict.
-BURST_FRAMES = int(os.environ.get("SMARTBIN_BURST", "3"))
+BURST_FRAMES = int(os.environ.get("SMARTBIN_BURST", "5"))
 
 _camera = None
 
