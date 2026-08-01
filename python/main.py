@@ -60,6 +60,13 @@ def _save_capture(frames, label, category):
 
     cv2.imwrite(str(path), frames[0])
     cv2.imwrite(str(CAPTURE_DIR / "latest.jpg"), frames[0])
+
+    # The full frame with the crop window drawn, so the camera can be aimed and
+    # the parallax offsets tuned by eye rather than by guesswork.
+    overlay = vision.debug_overlay() if hasattr(vision, "debug_overlay") else None
+    if overlay is not None:
+        cv2.imwrite(str(CAPTURE_DIR / "latest_full.jpg"), overlay)
+
     return path
 
 
