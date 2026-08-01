@@ -126,7 +126,16 @@ def _probabilities(interpreter, tensor_data: np.ndarray) -> np.ndarray:
         if scale > 0:
             output = scale * (output.astype(np.float32) - zero_point)
 
-    # Only softmax when the output is not already a distribution.
+        # A quantized classifier emits a distribution already, so it must not be
+        # softmaxed again. Classes below the quantization step round to zero, so
+        # on an unremarkable image the whole vector can be zeros - and softmax
+        # turns that into a uniform 1/N, reporting 0.001 confidence for every
+        # class instead of admitting it recognised nothing. Renormalise instead,
+        # and let an all-zero output stay zero.
+        total = float(output.sum())
+        return output / total if total > 0 else output.astype(np.float32)
+
+    # Float outputs may be logits; softmax only if they are not a distribution.
     if not np.isclose(np.sum(output), 1.0, atol=1e-2):
         exp_scores = np.exp(output - np.max(output))
         return exp_scores / np.sum(exp_scores)
