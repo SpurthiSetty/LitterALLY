@@ -1,59 +1,46 @@
 # Disposal policy. Remapping a label to a different category here needs no retraining.
 #
+# The labels below are the twelve classes the wastenet model actually emits, in
+# the order given by its labels.txt. Do not invent labels: a label the model
+# never produces is dead weight, and one it produces that is missing here
+# resolves to "unknown".
+#
 # The category names are a contract with the MCU: sketch.ino has its own
-# category -> colour/tone table, so adding a category here means adding it there too.
-# Any label the classifier emits that is missing below resolves to "unknown".
+# category -> colour/icon/tone table, so adding a category here means adding it
+# there too.
 
-min_confidence: 0.55
+# The single confidence floor for the system. The classifier package carries its
+# own CONFIDENCE_THRESHOLD, but the orchestrator does not use it - the floor is
+# disposal policy and belongs here, not inside vision.
+min_confidence: 0.65
 
 categories:
   recycle:
     labels:
-      - plastic_bottle
-      - glass_bottle
-      - aluminium_can
-      - tin_can
       - cardboard
       - paper
-      - newspaper
-      - magazine
-      - carton
+      - plastic
+      - metal
+      - brown-glass
+      - green-glass
+      - white-glass
 
   compost:
     labels:
-      - food_scraps
-      - fruit_peel
-      - vegetable_peel
-      - coffee_grounds
-      - tea_bag
-      - eggshell
-      - paper_towel
+      - biological
 
   trash:
     labels:
-      - plastic_bag
-      - plastic_wrap
-      - styrofoam
-      - chip_packet
-      - cigarette_butt
-      - broken_ceramic
+      - clothes
+      - shoes
+      - trash
 
   hazardous:
     labels:
       - battery
-      - paint_can
-      - aerosol_can
-      - light_bulb
-      - fluorescent_tube
-      - motor_oil
-      - medication
 
+  # No label in this model maps to e-waste. The category is kept so the MCU
+  # colour and icon stay defined, and so a model that can spot a phone or a
+  # cable only needs a change here.
   ewaste:
-    labels:
-      - phone
-      - laptop
-      - cable
-      - charger
-      - headphones
-      - circuit_board
-      - remote_control
+    labels: []

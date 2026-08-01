@@ -78,12 +78,23 @@ def capture():
 
 
 def classify(frame):
-    # Task 1 seam: replace with the real classifier. Returning a zero-confidence
-    # label keeps the trigger path exercisable end to end until then, because the
-    # rules engine resolves anything under the confidence floor to "unknown".
-    #
-    # frame may be None when the camera is missing or a read failed, so the real
-    # classifier has to handle that case rather than assume an array.
+    """Return (label, confidence). The label -> category step is not ours.
+
+    frame may be None when the camera is missing or a read failed.
+    """
     if frame is None:
         return UNKNOWN_LABEL, 0.0
-    return UNKNOWN_LABEL, 0.0
+
+    try:
+        from classification import classify_raw
+    except Exception as exc:
+        # A missing runtime or model must not take the bin down: the MCU shows
+        # unknown and everything else keeps working.
+        print(f"[vision] classifier unavailable ({exc})")
+        return UNKNOWN_LABEL, 0.0
+
+    try:
+        return classify_raw(frame)
+    except Exception as exc:
+        print(f"[vision] classification failed ({exc})")
+        return UNKNOWN_LABEL, 0.0

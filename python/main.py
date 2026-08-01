@@ -9,8 +9,10 @@ from arduino.app_utils import App, Bridge
 from rules import Rules
 from store import EventStore
 
-# Flip to "0" once a real classifier lands in vision.py.
-USE_FAKE_VISION = os.environ.get("SMARTBIN_FAKE_VISION", "1") != "0"
+# The real classifier is the default now. Set SMARTBIN_FAKE_VISION=1 to swap in
+# the stand-in, which is still the quickest way to exercise all six categories
+# without hunting for objects the model recognises.
+USE_FAKE_VISION = os.environ.get("SMARTBIN_FAKE_VISION", "0") != "0"
 
 if USE_FAKE_VISION:
     import fake_vision as vision

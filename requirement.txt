@@ -1,2 +1,6 @@
 opencv-python-headless
 pyyaml
+
+# Google's continuation of tflite_runtime, which publishes no wheel for this
+# board (Python 3.13 on aarch64). Same Interpreter API, runs the same .tflite.
+ai-edge-litert

@@ -15,7 +15,7 @@ class Rules:
         self._by_label = {
             label: category
             for category, spec in doc["categories"].items()
-            for label in spec["labels"]
+            for label in (spec.get("labels") or [])
         }
 
     def resolve(self, label, confidence):

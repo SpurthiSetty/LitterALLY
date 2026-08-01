@@ -8,5 +8,10 @@ smartbin.db
 # Frames written on every trigger. Useful on the board, not in git.
 python/captures/
 
+# Model weights, fetched by classification/download_models.py. The project
+# directory is bind-mounted from the board's real filesystem, so they survive
+# redeploys without being committed - the default model alone is ~20 MB.
+python/classification/models/
+
 # App Lab sketch build artifacts (~490 MB on the board).
 .cache/
