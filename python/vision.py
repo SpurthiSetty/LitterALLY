@@ -72,6 +72,28 @@ def _ensure_camera():
     return None
 
 
+def grab_background():
+    """Take a single frame as the reference for an empty scene.
+
+    Called from the loop, never from a Bridge handler: V4L2 allows one opener
+    and reading from two threads is how the camera gets wedged.
+    """
+    camera = _ensure_camera()
+    if camera is None:
+        return False
+
+    for _ in range(_FLUSH_FRAMES):
+        camera.grab()
+    ok, frame = camera.read()
+    if not ok or frame is None:
+        return False
+
+    import detector
+
+    detector.set_background(square_crop(frame))
+    return True
+
+
 def capture(count=None, distance_mm=None):
     """Grab a short burst of full frames and return them as a list.
 

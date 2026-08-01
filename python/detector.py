@@ -14,6 +14,47 @@ caller falls back to the whole frame, which is no worse than before.
 import os
 
 import cv2
+import numpy as np
+
+# yolox - the COCO detector. Knows bottle, banana, cup, cell phone; knows
+#         nothing about a battery, a sheet of cardboard or a piece of cloth.
+# diff  - difference against a reference frame of the empty scene. Needs no
+#         classes at all, which is the point: it finds whatever was not there
+#         before. The default.
+# off   - classify the whole frame.
+#
+# Defaults to off. Both alternatives were measured against real captures and
+# neither earns its place yet. yolox finds the room - person, chair,
+# refrigerator - and almost never the held item, because COCO has no class for
+# a battery or a sheet of cardboard. diff finds the largest thing that moved,
+# which is always the hand: one capture boxed the hand and wrapper while the
+# battery sat sharp and centred just below the crop, and the hand duly
+# classified as "biological". Cropping wrong is worse than not cropping, and
+# uncropped the same battery scored 0.97.
+MODE = os.environ.get("SMARTBIN_DETECT", "off").lower()
+
+# How different a pixel must be to count as changed. Low enough to catch a dark
+# battery against a dark counter, high enough to ignore sensor noise and the
+# slow drift of daylight.
+DIFF_THRESHOLD = int(os.environ.get("SMARTBIN_DIFF_THRESHOLD", "28"))
+
+# Ignore changed regions smaller than this share of the frame - a few hundred
+# noisy pixels are not an object.
+DIFF_MIN_AREA = float(os.environ.get("SMARTBIN_DIFF_MIN_AREA", "0.004"))
+
+# A changed region touching the frame edge is something reaching in - an arm, a
+# sleeve, a shifted chair - not something being held out to be looked at. An
+# item presented to a camera sits wholly inside the picture. This is what
+# separates the battery from the hand above it: taking the largest region
+# always chose the hand, which then classified as "biological" while the
+# battery sat sharp and centred just below the crop.
+BORDER_MARGIN = int(os.environ.get("SMARTBIN_DIFF_BORDER", "8"))
+
+# A change covering most of the view is the light changing or the camera
+# moving, not an object. Cropping to it is a no-op anyway.
+DIFF_MAX_AREA = float(os.environ.get("SMARTBIN_DIFF_MAX_AREA", "0.80"))
+
+_background = None
 
 # COCO classes that are the room rather than something being held out. Without
 # this the crop lands on the fridge: on a real capture the two detections were
@@ -45,11 +86,122 @@ def _get_detector():
     return _detector
 
 
+def set_background(frame):
+    """Remember what the scene looks like with nothing in it.
+
+    Called when the MCU reports the item has been withdrawn, which is the only
+    moment we can be sure the view is empty. Stored blurred and in grey: the
+    comparison cares about shapes appearing, not about sensor noise or a
+    one-pixel shift.
+    """
+    global _background
+    if frame is None:
+        return
+    _background = _prepare(frame)
+
+
+def has_background():
+    return _background is not None
+
+
+# Skin in YCrCb. The chroma range is broad on purpose - it has to hold across
+# skin tones, and a false positive only costs a smaller crop, while a false
+# negative puts the hand back in the picture. Tan cardboard sits near this
+# range, which is the known cost of the approach.
+REMOVE_SKIN = os.environ.get("SMARTBIN_DIFF_SKIN", "1") != "0"
+_SKIN_LOW = np.array([0, 133, 77], dtype=np.uint8)
+_SKIN_HIGH = np.array([255, 180, 135], dtype=np.uint8)
+
+
+def _skin_mask(frame):
+    ycrcb = cv2.cvtColor(frame, cv2.COLOR_BGR2YCrCb)
+    skin = cv2.inRange(ycrcb, _SKIN_LOW, _SKIN_HIGH)
+    # Grow it slightly so the rim of the hand goes too, rather than leaving a
+    # halo that reconnects the hand to the item.
+    return cv2.dilate(skin, np.ones((7, 7), np.uint8), iterations=2)
+
+
+def _prepare(frame):
+    grey = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    return cv2.GaussianBlur(grey, (21, 21), 0)
+
+
+def _find_by_difference(frame):
+    """Box around whatever was not in the empty scene.
+
+    This is the one approach that does not need to know what the object is,
+    which is why it works for a battery when a COCO detector cannot: it is not
+    recognising a battery, only noticing that something is there now.
+    """
+    if _background is None:
+        return None
+
+    current = _prepare(frame)
+    if current.shape != _background.shape:
+        return None
+
+    delta = cv2.absdiff(_background, current)
+    _, mask = cv2.threshold(delta, DIFF_THRESHOLD, 255, cv2.THRESH_BINARY)
+
+    # Take the hand out of the change. Fingers touch the item, so after any
+    # dilation the two are one connected region and no contour rule can tell
+    # them apart - the largest region is always hand-plus-item, and the item is
+    # the smaller half. Skin colour is the one property that separates them.
+    if REMOVE_SKIN:
+        mask = cv2.bitwise_and(mask, cv2.bitwise_not(_skin_mask(frame)))
+
+    # Open to drop speckle, then dilate so an object broken into separate
+    # bright and dark patches is bridged into one region. Kept modest: heavy
+    # dilation re-merges whatever the skin mask just separated.
+    kernel = np.ones((5, 5), np.uint8)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+    mask = cv2.dilate(mask, kernel, iterations=1)
+
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return None
+
+    height, width = frame.shape[:2]
+    frame_area = float(width * height)
+
+    interior = []
+    for contour in contours:
+        x, y, w, h = cv2.boundingRect(contour)
+        if w * h < DIFF_MIN_AREA * frame_area or w * h > DIFF_MAX_AREA * frame_area:
+            continue
+        if (x <= BORDER_MARGIN or y <= BORDER_MARGIN
+                or x + w >= width - BORDER_MARGIN
+                or y + h >= height - BORDER_MARGIN):
+            continue
+        interior.append((w * h, (x, y, x + w, y + h)))
+
+    if not interior:
+        # Better to hand over the whole frame than to crop to the arm. A wrong
+        # crop removes the subject entirely; no crop is merely the old
+        # behaviour.
+        print("[detector] nothing fully inside the frame, using it all")
+        return None
+
+    area, box = max(interior, key=lambda item: item[0])
+    print(f"[detector] item {box[2] - box[0]}x{box[3] - box[1]} "
+          f"({100.0 * area / frame_area:.0f}% of frame), "
+          f"{len(contours)} changed regions, {len(interior)} inside")
+    return _pad(list(box), width, height)
+
+
 def find_item(frame):
     """Best guess at the presented item as (x1, y1, x2, y2), or None.
 
     None means "no opinion" - the caller should use the whole frame.
     """
+    if MODE in ("0", "off", "none"):
+        return None
+    if MODE == "diff":
+        return _find_by_difference(frame)
+    return _find_yolox(frame)
+
+
+def _find_yolox(frame):
     try:
         detector = _get_detector()
         ok, buffer = cv2.imencode(".jpg", frame)

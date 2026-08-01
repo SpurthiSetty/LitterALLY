@@ -1,5 +1,6 @@
 import os
 import queue
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -59,6 +60,20 @@ def on_trigger(distance_mm=0):
 
 Bridge.provide("on_trigger", on_trigger)
 
+# Set when the MCU reports the item has gone. The camera read happens in the
+# loop rather than here, because V4L2 permits a single opener and reading from
+# a Bridge handler thread races the trigger path for it.
+_want_background = False
+
+
+def scene_clear():
+    global _want_background
+    _want_background = True
+    return True
+
+
+Bridge.provide("scene_clear", scene_clear)
+
 
 def host_log(line):
     # The MCU's own Monitor output only reaches App Lab's serial tab, which is
@@ -71,16 +86,9 @@ Bridge.provide("host_log", host_log)
 
 
 def _log(line):
-    """Print locally and echo to the MCU serial monitor.
-
-    notify rather than call: this is diagnostic output on the real-time path
-    and must not block the result getting back to the MCU.
-    """
+    # Stays in the Python console. Forwarding it to the serial monitor was
+    # tried and removed: a String parameter never reaches an MCU handler.
     print(line)
-    try:
-        Bridge.notify("mcu_log", line)
-    except Exception:
-        pass
 
 
 if not USE_FAKE_VISION:
@@ -142,21 +150,34 @@ def _handle_trigger(distance_mm):
         print(f"[bin] could not reach the MCU ({exc})")
 
 
-_announced = False
+# Re-announced rather than sent once. The MCU boots long before this container
+# and stays in degraded mode until it hears from us - but it also reboots on
+# every sketch flash, and a one-shot announcement is lost when that happens
+# after we have already spoken. The symptom is the bin insisting Linux is not
+# up while Linux is running perfectly. Cheap to repeat, so repeat.
+ANNOUNCE_EVERY_S = 5.0
+_last_announce = 0.0
 
 
 def loop():
-    global _announced
-    if not _announced:
-        # The MCU boots long before this container, so it stays in degraded mode
-        # until we announce ourselves.
+    global _last_announce, _want_background
+
+    now = time.monotonic()
+    if now - _last_announce >= ANNOUNCE_EVERY_S:
         Bridge.notify("mpu_ready")
-        _announced = True
-        print("[bin] announced mpu_ready, waiting for triggers")
+        if _last_announce == 0.0:
+            print("[bin] announced mpu_ready, waiting for triggers")
+        _last_announce = now
 
     try:
         distance_mm = _triggers.get(timeout=0.5)
     except queue.Empty:
+        # Nothing to classify, so this is the safe moment to refresh the empty
+        # scene the detector compares against.
+        if _want_background:
+            _want_background = False
+            if vision.grab_background():
+                print("[bin] background reference updated")
         return
 
     _handle_trigger(distance_mm)

@@ -385,6 +385,9 @@ void loop() {
   if (state == SHOWING && now - resultShownTime >= RESULT_HOLD_MS && !itemPresent) {
     clearDisplay();
     state = IDLE;
+    // The only moment Linux can be certain the view is empty, which is what
+    // its background reference needs to be taken from.
+    Bridge.notify("scene_clear");
   }
 
   switch (state) {
@@ -400,6 +403,7 @@ void loop() {
       if (!itemPresent) {
         state = IDLE;
         Monitor.println("item withdrawn, resetting");
+        Bridge.notify("scene_clear");
       } else if (now - holdStartTime >= HOLD_TIME_MS) {
         buzzer.tone(1000, 300);
         if (mpuReady) {
