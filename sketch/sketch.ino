@@ -7,9 +7,14 @@
 
 #include "Modulino.h"
 #include <Arduino_RouterBridge.h>
+#include <Arduino_LED_Matrix.h>
 
 ModulinoDistance distance;
 ModulinoBuzzer buzzer;
+Arduino_LED_Matrix matrix;
+
+const uint8_t MATRIX_WIDTH = 13;
+const uint8_t MATRIX_HEIGHT = 8;
 
 const int MIN_DEADZONE_MM = 20;               // optical floor of the ToF sensor
 const int DIST_THRESHOLD_MM = 250;            // an item this close counts as presented
@@ -40,6 +45,73 @@ const CategoryStyle STYLES[] = {
 };
 const size_t STYLE_COUNT = sizeof(STYLES) / sizeof(STYLES[0]);
 const size_t UNKNOWN_STYLE = STYLE_COUNT - 1;
+
+// The matrix is monochrome, so it carries shape while the LEDs carry colour.
+// Encoding the category twice means the result is still readable when the two
+// colours are hard to tell apart. Rows must stay MATRIX_WIDTH characters wide
+// and there must be MATRIX_HEIGHT of them; '#' lights a pixel.
+const char* const ICONS[][MATRIX_HEIGHT] = {
+  {  // recycle - a thick loop with an arrowhead on the right
+    "....#####....",
+    "..###...###..",
+    ".##.......##.",
+    "##.........##",
+    "##.......####",
+    ".##.......##.",
+    "..###...###..",
+    "....#####....",
+  },
+  {  // compost - a filled leaf with a stem
+    "........#####",
+    "......#######",
+    "....#########",
+    "..##########.",
+    ".#########...",
+    "#######......",
+    "..#..........",
+    ".#...........",
+  },
+  {  // trash - a bin
+    "....#####....",
+    "..#########..",
+    "..#.......#..",
+    "..#.#.#.#.#..",
+    "..#.#.#.#.#..",
+    "..#.#.#.#.#..",
+    "..#.......#..",
+    "...#######...",
+  },
+  {  // hazardous - exclamation mark
+    ".....###.....",
+    ".....###.....",
+    ".....###.....",
+    ".....###.....",
+    ".....###.....",
+    ".............",
+    ".....###.....",
+    ".....###.....",
+  },
+  {  // ewaste - a filled lightning bolt
+    "........####.",
+    ".......####..",
+    "......####...",
+    ".....########",
+    "..########...",
+    ".....####....",
+    "....####.....",
+    "...####......",
+  },
+  {  // unknown - question mark
+    "....#####....",
+    "...#.....#...",
+    ".........#...",
+    "......###....",
+    "......#......",
+    ".............",
+    "......#......",
+    ".............",
+  },
+};
 
 enum State { IDLE, ARMING, WAITING, SHOWING };
 
@@ -74,22 +146,40 @@ void setLeds(bool r, bool g, bool b) {
   digitalWrite(LED4_B, b ? LOW : HIGH);
 }
 
-void clearLeds() {
-  setLeds(false, false, false);
-}
+void showIcon(size_t style) {
+  static uint8_t pixels[MATRIX_HEIGHT * MATRIX_WIDTH];
+  size_t n = 0;
 
-const CategoryStyle& styleFor(const String& name) {
-  for (size_t i = 0; i < STYLE_COUNT; i++) {
-    if (name == STYLES[i].name) {
-      return STYLES[i];
+  for (uint8_t y = 0; y < MATRIX_HEIGHT; y++) {
+    const char* row = ICONS[style][y];
+    for (uint8_t x = 0; x < MATRIX_WIDTH; x++) {
+      pixels[n++] = (row[x] == '#') ? 1 : 0;
     }
   }
-  return STYLES[UNKNOWN_STYLE];
+
+  matrix.loadPixels(pixels, n);
+}
+
+void clearDisplay() {
+  setLeds(false, false, false);
+  matrix.clear();
+}
+
+size_t styleIndexFor(const String& name) {
+  for (size_t i = 0; i < STYLE_COUNT; i++) {
+    if (name == STYLES[i].name) {
+      return i;
+    }
+  }
+  return UNKNOWN_STYLE;
 }
 
 void showCategory(const String& name) {
-  const CategoryStyle& style = styleFor(name);
+  size_t index = styleIndexFor(name);
+  const CategoryStyle& style = STYLES[index];
+
   setLeds(style.r, style.g, style.b);
+  showIcon(index);
   buzzer.tone(style.tone, 200);
 
   Monitor.print(">>> category: ");
@@ -107,7 +197,9 @@ void setup() {
   pinMode(LED4_R, OUTPUT);
   pinMode(LED4_G, OUTPUT);
   pinMode(LED4_B, OUTPUT);
-  clearLeds();
+
+  matrix.begin();
+  clearDisplay();
 
   Modulino.begin();
   distance.begin();
@@ -141,7 +233,7 @@ void loop() {
   }
 
   if (state == SHOWING && now - resultShownTime >= RESULT_HOLD_MS) {
-    clearLeds();
+    clearDisplay();
     state = IDLE;
   }
 
