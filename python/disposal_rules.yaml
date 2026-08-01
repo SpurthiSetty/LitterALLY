@@ -15,7 +15,7 @@
 min_confidence: 0.65
 
 categories:
-  recyclable:
+  recycle:
     labels:
       - cardboard
       - paper
@@ -25,9 +25,12 @@ categories:
       - green-glass
       - white-glass
 
-  non-recyclable:
+  compost:
     labels:
       - biological
+
+  trash:
+    labels:
       - clothes
       - shoes
       - trash
@@ -35,3 +38,9 @@ categories:
   hazardous:
     labels:
       - battery
+
+  # No wastenet label maps to e-waste. The category is kept so its colour and
+  # icon stay defined, and so a model that can spot a phone or a cable needs a
+  # change only here.
+  ewaste:
+    labels: []

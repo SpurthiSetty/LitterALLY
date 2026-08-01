@@ -19,6 +19,20 @@ BURST_FRAMES = int(os.environ.get("SMARTBIN_BURST", "3"))
 _camera = None
 
 
+def square_crop(frame):
+    """Take the largest centred square, so 640x480 becomes 480x480.
+
+    Not a zoom - it only trims the left and right margins. The model input is
+    square, and resizing 4:3 straight to 1:1 stretches everything by a third,
+    so this removes a distortion rather than discarding the subject.
+    """
+    height, width = frame.shape[:2]
+    side = min(height, width)
+    top = (height - side) // 2
+    left = (width - side) // 2
+    return frame[top:top + side, left:left + side]
+
+
 def _candidate_indices():
     # Enumerate what actually exists rather than hardcoding: the webcam was
     # /dev/video2 one boot and /dev/video0 the next, so USB enumeration order
@@ -87,7 +101,7 @@ def capture(count=None, distance_mm=None):
     for _ in range(max(1, count)):
         ok, frame = camera.read()
         if ok and frame is not None:
-            frames.append(frame)
+            frames.append(square_crop(frame))
 
     if frames:
         height, width = frames[0].shape[:2]

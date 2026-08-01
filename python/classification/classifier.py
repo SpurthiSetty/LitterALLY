@@ -21,6 +21,15 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 # Loading weights costs far more than inference, so interpreters are cached.
 _INTERPRETER_CACHE = {}
 
+# Where per-frame output goes. The orchestrator swaps this for a sink that also
+# forwards to the MCU serial monitor; the Bridge stays out of this module.
+_log = print
+
+
+def set_logger(fn):
+    global _log
+    _log = fn
+
 
 def _get_interpreter(model_name: str):
     if model_name in _INTERPRETER_CACHE:
@@ -157,14 +166,14 @@ def classify_burst(frames, model_name: str = None, strategy: str = None):
     for i, vector in enumerate(prob_vectors, start=1):
         idx = int(np.argmax(vector))
         name = labels[idx] if idx < len(labels) else "unknown"
-        print(f"[vision]   frame {i}/{len(prob_vectors)}: {name} {float(vector[idx]):.3f}")
+        _log(f"[vision]   frame {i}/{len(prob_vectors)}: {name} {float(vector[idx]):.3f}")
 
     scores = _combine(prob_vectors, strategy)
     top = int(np.argmax(scores))
 
     label = labels[top] if top < len(labels) else "unknown"
     confidence = float(scores[top])
-    print(f"[vision]   {strategy} -> {label} {confidence:.3f}")
+    _log(f"[vision]   {strategy} -> {label} {confidence:.3f}")
 
     return label, confidence
 

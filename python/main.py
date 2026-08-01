@@ -48,6 +48,25 @@ def on_trigger(distance_mm=0):
 Bridge.provide("on_trigger", on_trigger)
 
 
+def _log(line):
+    """Print locally and echo to the MCU serial monitor.
+
+    notify rather than call: this is diagnostic output on the real-time path
+    and must not block the result getting back to the MCU.
+    """
+    print(line)
+    try:
+        Bridge.notify("mcu_log", line)
+    except Exception:
+        pass
+
+
+if not USE_FAKE_VISION:
+    from classification import classifier
+
+    classifier.set_logger(_log)
+
+
 def _save_capture(frames, label, category):
     """Keep one frame from the burst. The rest differ only by a few milliseconds
     and are not worth the disk."""

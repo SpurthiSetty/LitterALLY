@@ -36,10 +36,12 @@ struct CategoryStyle {
 };
 
 const CategoryStyle STYLES[] = {
-  {"recyclable",     false, false, true,   880},  // blue
-  {"non-recyclable", true,  true,  true,   440},  // white
-  {"hazardous",      true,  false, false, 1320},  // red
-  {"unknown",        true,  true,  false,  220},  // yellow
+  {"recycle",   false, false, true,   880},  // blue
+  {"compost",   false, true,  false,  660},  // green
+  {"trash",     true,  true,  true,   440},  // white
+  {"hazardous", true,  false, false, 1320},  // red
+  {"ewaste",    true,  false, true,  1100},  // magenta
+  {"unknown",   true,  true,  false,  220},  // yellow
 };
 const size_t STYLE_COUNT = sizeof(STYLES) / sizeof(STYLES[0]);
 const size_t UNKNOWN_STYLE = STYLE_COUNT - 1;
@@ -49,7 +51,7 @@ const size_t UNKNOWN_STYLE = STYLE_COUNT - 1;
 // colours are hard to tell apart. Rows must stay MATRIX_WIDTH characters wide
 // and there must be MATRIX_HEIGHT of them; '#' lights a pixel.
 const char* const ICONS[][MATRIX_HEIGHT] = {
-  {  // recyclable - a thick loop with an arrowhead on the right
+  {  // recycle - a thick loop with an arrowhead on the right
     "....#####....",
     "..###...###..",
     ".##.......##.",
@@ -59,7 +61,17 @@ const char* const ICONS[][MATRIX_HEIGHT] = {
     "..###...###..",
     "....#####....",
   },
-  {  // non-recyclable - a bin
+  {  // compost - a filled leaf with a stem
+    "........#####",
+    "......#######",
+    "....#########",
+    "..##########.",
+    ".#########...",
+    "#######......",
+    "..#..........",
+    ".#...........",
+  },
+  {  // trash - a bin
     "....#####....",
     "..#########..",
     "..#.......#..",
@@ -78,6 +90,16 @@ const char* const ICONS[][MATRIX_HEIGHT] = {
     ".............",
     ".....###.....",
     ".....###.....",
+  },
+  {  // ewaste - a filled lightning bolt
+    "........####.",
+    ".......####..",
+    "......####...",
+    ".....########",
+    "..########...",
+    ".....####....",
+    "....####.....",
+    "...####......",
   },
   {  // unknown - question mark
     "....#####....",
@@ -114,6 +136,13 @@ void set_feedback(String category) {
 
 void mpu_ready() {
   mpuReady = true;
+}
+
+// Echoes a line from the Linux side onto the serial monitor. The classifier
+// runs on the MPU, so its per-frame output would otherwise only appear in the
+// Python console; this puts it beside the MCU's own state changes.
+void mcu_log(String line) {
+  Monitor.println(line);
 }
 
 void setLeds(bool r, bool g, bool b) {
@@ -187,6 +216,7 @@ void setup() {
 
   Bridge.provide_safe("set_feedback", set_feedback);
   Bridge.provide_safe("mpu_ready", mpu_ready);
+  Bridge.provide_safe("mcu_log", mcu_log);
 
   Monitor.println("====================================");
   Monitor.println("  SMART BIN MCU READY               ");
