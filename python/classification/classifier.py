@@ -152,11 +152,21 @@ def classify_burst(frames, model_name: str = None, strategy: str = None):
         for frame in frames
     ]
 
+    # Per-frame verdicts, so a combined result that looks odd can be traced back
+    # to whether the frames disagreed or were uniformly weak.
+    for i, vector in enumerate(prob_vectors, start=1):
+        idx = int(np.argmax(vector))
+        name = labels[idx] if idx < len(labels) else "unknown"
+        print(f"[vision]   frame {i}/{len(prob_vectors)}: {name} {float(vector[idx]):.3f}")
+
     scores = _combine(prob_vectors, strategy)
     top = int(np.argmax(scores))
 
     label = labels[top] if top < len(labels) else "unknown"
-    return label, float(scores[top])
+    confidence = float(scores[top])
+    print(f"[vision]   {strategy} -> {label} {confidence:.3f}")
+
+    return label, confidence
 
 
 def classify_raw(image_input, model_name: str = None):
