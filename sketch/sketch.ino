@@ -115,9 +115,83 @@ const char* const ICONS[][MATRIX_HEIGHT] = {
 
 enum State { IDLE, ARMING, WAITING, SHOWING };
 
+// Distance filter.
+//
+// The ToF sensor is noisy and drops readings outright, returning 0 when it has
+// no valid target. Thresholding raw samples meant one bad sample looked exactly
+// like a withdrawn item and restarted the three-second hold. A small
+// constant-velocity Kalman filter tracks distance and its rate of change, so a
+// dropped sample coasts on the prediction instead, and the threshold is applied
+// to the estimate rather than the raw reading.
+//
+// dt is one poll tick throughout, which is why the matrix algebra below reduces
+// to additions: velocity is in mm per tick, not mm per second.
+const float MEAS_VAR = 100.0f;    // sensor noise, about 10 mm sigma
+const float PROC_VAR = 25.0f;     // how much true distance can change per tick
+const float GATE_SIGMA = 4.0f;    // reject jumps wilder than this as outliers
+const int MAX_MISSES = 3;         // ~300 ms unusable before the item counts as gone
+
+float kx = 0.0f;                  // estimated distance, mm
+float kv = 0.0f;                  // estimated velocity, mm per tick
+float kP[2][2] = {{0, 0}, {0, 0}};
+bool kInit = false;
+int kMisses = 0;
+
+void kalmanReset() {
+  kInit = false;
+  kMisses = 0;
+  kx = 0.0f;
+  kv = 0.0f;
+}
+
+void kalmanStart(float z) {
+  kx = z;
+  kv = 0.0f;
+  kP[0][0] = MEAS_VAR; kP[0][1] = 0.0f;
+  kP[1][0] = 0.0f;     kP[1][1] = MEAS_VAR;
+  kInit = true;
+  kMisses = 0;
+}
+
+void kalmanPredict() {
+  kx += kv;
+  // P = F P F' + Q, with F = {{1,1},{0,1}}. Order matters: each line below
+  // reads covariance terms the later lines overwrite.
+  kP[0][0] += kP[0][1] + kP[1][0] + kP[1][1] + PROC_VAR * 0.25f;
+  kP[0][1] += kP[1][1] + PROC_VAR * 0.5f;
+  kP[1][0] += kP[1][1] + PROC_VAR * 0.5f;
+  kP[1][1] += PROC_VAR;
+}
+
+bool kalmanUpdate(float z) {
+  float y = z - kx;
+  float S = kP[0][0] + MEAS_VAR;
+
+  // Gate on innovation. A genuine fast withdrawal also trips this, but the
+  // miss counter resets the filter after a few, so it re-acquires rather than
+  // locking onto a stale estimate.
+  if (y * y > GATE_SIGMA * GATE_SIGMA * S) {
+    return false;
+  }
+
+  float K0 = kP[0][0] / S;
+  float K1 = kP[1][0] / S;
+
+  kx += K0 * y;
+  kv += K1 * y;
+
+  float p00 = kP[0][0];
+  float p01 = kP[0][1];
+  kP[0][0] -= K0 * p00;
+  kP[0][1] -= K0 * p01;
+  kP[1][0] -= K1 * p00;
+  kP[1][1] -= K1 * p01;
+  return true;
+}
+
 State state = IDLE;
 bool itemPresent = false;
-int lastDistanceMm = 0;   // sent with on_trigger so the MPU can size its crop
+int lastDistanceMm = 0;   // filtered estimate, sent with on_trigger
 unsigned long lastPollTime = 0;
 unsigned long holdStartTime = 0;
 unsigned long triggerSentTime = 0;
@@ -248,14 +322,36 @@ void loop() {
   lastPollTime = now;
 
   if (distance.available()) {
-    // A reading of 0 means the sensor has no valid target. It falls outside the
-    // window on its own, so absence needs no special case - and treating it as
-    // absence rather than as noise means a withdrawn item is caught within one
-    // poll instead of holding the previous state.
     int raw_mm = distance.get();
-    itemPresent = (raw_mm >= MIN_DEADZONE_MM && raw_mm <= DIST_THRESHOLD_MM);
-    if (itemPresent) {
-      lastDistanceMm = raw_mm;
+
+    // 0 means the sensor had no valid target. Any other reading is real, even
+    // one far outside the window - it is the threshold's job to decide whether
+    // that counts as an item, not the filter's.
+    bool usable = (raw_mm > 0 && raw_mm < 4000);
+
+    if (!kInit) {
+      if (usable) {
+        kalmanStart(raw_mm);
+      }
+    } else {
+      kalmanPredict();
+      if (usable && kalmanUpdate(raw_mm)) {
+        kMisses = 0;
+      } else {
+        kMisses++;
+      }
+    }
+
+    if (kInit && kMisses <= MAX_MISSES) {
+      itemPresent = (kx >= MIN_DEADZONE_MM && kx <= DIST_THRESHOLD_MM);
+      if (itemPresent) {
+        lastDistanceMm = (int)(kx + 0.5f);
+      }
+    } else {
+      itemPresent = false;
+      if (kMisses > MAX_MISSES) {
+        kalmanReset();
+      }
     }
   }
 
