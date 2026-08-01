@@ -11,7 +11,9 @@ MODELS_MAP = {
     # URL 404s and the default model silently fails to download.
     "wastenet_model.tflite": "https://github.com/KrisnaSantosa15/wastenet-garbage-classifier/raw/main/tflite/model.tflite",
     "eco_ai_model.tflite": "https://github.com/Eraly-ml/eco_AI/raw/main/model.tflite",
-    "recyclable_waste_model.tflite": "https://huggingface.co/Jyoti0815/recyclable-image-detection/resolve/main/waste_model.tflite"
+    # recyclable_waste_model.tflite was downloaded here but had no
+    # MODEL_REGISTRY entry and no label list, so it could never be selected -
+    # and without its labels in the right order it would be unusable anyway.
 }
 
 

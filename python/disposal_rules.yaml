@@ -1,21 +1,21 @@
-# Disposal policy. Remapping a label to a different category here needs no retraining.
+# Disposal policy. THE single source of truth for label -> category.
+#
+# Nothing else in the codebase maps objects to categories. The classifier
+# package used to carry its own LOCAL_RULES table and confidence threshold;
+# both were removed, because two tables that disagreed would silently produce
+# a category the MCU has no colour for.
 #
 # The labels below are the twelve classes the wastenet model actually emits, in
-# the order given by its labels.txt. Do not invent labels: a label the model
-# never produces is dead weight, and one it produces that is missing here
-# resolves to "unknown".
+# the order given by its labels.txt. A label the model never produces is dead
+# weight; one it produces that is missing here resolves to "unknown".
 #
-# The category names are a contract with the MCU: sketch.ino has its own
-# category -> colour/icon/tone table, so adding a category here means adding it
-# there too.
+# Category names are a contract with the MCU: sketch.ino has a matching
+# category -> colour/icon/tone table, so a change here needs a change there.
 
-# The single confidence floor for the system. The classifier package carries its
-# own CONFIDENCE_THRESHOLD, but the orchestrator does not use it - the floor is
-# disposal policy and belongs here, not inside vision.
 min_confidence: 0.65
 
 categories:
-  recycle:
+  recyclable:
     labels:
       - cardboard
       - paper
@@ -25,12 +25,9 @@ categories:
       - green-glass
       - white-glass
 
-  compost:
+  non-recyclable:
     labels:
       - biological
-
-  trash:
-    labels:
       - clothes
       - shoes
       - trash
@@ -38,9 +35,3 @@ categories:
   hazardous:
     labels:
       - battery
-
-  # No label in this model maps to e-waste. The category is kept so the MCU
-  # colour and icon stay defined, and so a model that can spot a phone or a
-  # cable only needs a change here.
-  ewaste:
-    labels: []

@@ -12,6 +12,10 @@ UNKNOWN_LABEL = "unknown"
 _WARMUP_FRAMES = 10
 _FLUSH_FRAMES = 5
 
+# Frames per trigger. Override with SMARTBIN_BURST; the classifier combines them
+# into one verdict.
+BURST_FRAMES = int(os.environ.get("SMARTBIN_BURST", "3"))
+
 _camera = None
 
 
@@ -54,39 +58,45 @@ def _ensure_camera():
     return None
 
 
-def release():
-    # V4L2 allows a single opener, so the handle has to be freed explicitly
-    # rather than left to garbage collection.
-    global _camera
-    if _camera is not None:
-        _camera.release()
-        _camera = None
+def capture(count=None):
+    """Grab a short burst of frames and return them as a list.
 
+    Several frames of the same item beat one, because a single frame can catch
+    motion blur, a reflection, or an awkward angle. They are taken back to back
+    so they are all of the same object, and classified together downstream.
+    Returns [] when no camera is available.
+    """
+    if count is None:
+        count = BURST_FRAMES
 
-def capture():
     camera = _ensure_camera()
     if camera is None:
-        return None
+        return []
 
-    # Drop whatever the driver has buffered so the frame reflects now, not the
+    # Drop whatever the driver has buffered so the burst reflects now, not the
     # last time anyone looked.
     for _ in range(_FLUSH_FRAMES):
         camera.grab()
 
-    ok, frame = camera.read()
-    return frame if ok else None
+    frames = []
+    for _ in range(max(1, count)):
+        ok, frame = camera.read()
+        if ok and frame is not None:
+            frames.append(frame)
+
+    return frames
 
 
-def classify(frame):
-    """Return (label, confidence). The label -> category step is not ours.
+def classify(frames):
+    """Return (label, confidence) for a burst. The label -> category step is not ours.
 
-    frame may be None when the camera is missing or a read failed.
+    frames may be empty when the camera is missing or every read failed.
     """
-    if frame is None:
+    if not frames:
         return UNKNOWN_LABEL, 0.0
 
     try:
-        from classification import classify_raw
+        from classification import classify_burst
     except Exception as exc:
         # A missing runtime or model must not take the bin down: the MCU shows
         # unknown and everything else keeps working.
@@ -94,7 +104,7 @@ def classify(frame):
         return UNKNOWN_LABEL, 0.0
 
     try:
-        return classify_raw(frame)
+        return classify_burst(frames)
     except Exception as exc:
         print(f"[vision] classification failed ({exc})")
         return UNKNOWN_LABEL, 0.0

@@ -28,7 +28,7 @@ const unsigned long RESULT_HOLD_MS = 5000;    // minimum time the result stays l
 //
 // There is no Modulino Pixels on this build, so the colour signal goes to the
 // two onboard RGB LEDs instead. That allows only one bit per channel, which is
-// still enough for six distinguishable colours - one per category.
+// ample for three categories plus unknown.
 struct CategoryStyle {
   const char* name;
   bool r, g, b;
@@ -36,12 +36,10 @@ struct CategoryStyle {
 };
 
 const CategoryStyle STYLES[] = {
-  {"recycle",   false, false, true,   880},  // blue
-  {"compost",   false, true,  false,  660},  // green
-  {"trash",     true,  true,  true,   440},  // white
-  {"hazardous", true,  false, false, 1320},  // red
-  {"ewaste",    true,  false, true,  1100},  // magenta
-  {"unknown",   true,  true,  false,  220},  // yellow
+  {"recyclable",     false, false, true,   880},  // blue
+  {"non-recyclable", true,  true,  true,   440},  // white
+  {"hazardous",      true,  false, false, 1320},  // red
+  {"unknown",        true,  true,  false,  220},  // yellow
 };
 const size_t STYLE_COUNT = sizeof(STYLES) / sizeof(STYLES[0]);
 const size_t UNKNOWN_STYLE = STYLE_COUNT - 1;
@@ -51,7 +49,7 @@ const size_t UNKNOWN_STYLE = STYLE_COUNT - 1;
 // colours are hard to tell apart. Rows must stay MATRIX_WIDTH characters wide
 // and there must be MATRIX_HEIGHT of them; '#' lights a pixel.
 const char* const ICONS[][MATRIX_HEIGHT] = {
-  {  // recycle - a thick loop with an arrowhead on the right
+  {  // recyclable - a thick loop with an arrowhead on the right
     "....#####....",
     "..###...###..",
     ".##.......##.",
@@ -61,17 +59,7 @@ const char* const ICONS[][MATRIX_HEIGHT] = {
     "..###...###..",
     "....#####....",
   },
-  {  // compost - a filled leaf with a stem
-    "........#####",
-    "......#######",
-    "....#########",
-    "..##########.",
-    ".#########...",
-    "#######......",
-    "..#..........",
-    ".#...........",
-  },
-  {  // trash - a bin
+  {  // non-recyclable - a bin
     "....#####....",
     "..#########..",
     "..#.......#..",
@@ -90,16 +78,6 @@ const char* const ICONS[][MATRIX_HEIGHT] = {
     ".............",
     ".....###.....",
     ".....###.....",
-  },
-  {  // ewaste - a filled lightning bolt
-    "........####.",
-    ".......####..",
-    "......####...",
-    ".....########",
-    "..########...",
-    ".....####....",
-    "....####.....",
-    "...####......",
   },
   {  // unknown - question mark
     "....#####....",

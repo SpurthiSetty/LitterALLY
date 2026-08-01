@@ -47,30 +47,32 @@ def on_trigger():
 Bridge.provide("on_trigger", on_trigger)
 
 
-def _save_capture(frame, label, category):
-    if frame is None:
+def _save_capture(frames, label, category):
+    """Keep one frame from the burst. The rest differ only by a few milliseconds
+    and are not worth the disk."""
+    if not frames:
         return None
 
     CAPTURE_DIR.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     path = CAPTURE_DIR / f"{stamp}_{label}_{category}.jpg"
 
-    cv2.imwrite(str(path), frame)
-    cv2.imwrite(str(CAPTURE_DIR / "latest.jpg"), frame)
+    cv2.imwrite(str(path), frames[0])
+    cv2.imwrite(str(CAPTURE_DIR / "latest.jpg"), frames[0])
     return path
 
 
 def _handle_trigger():
     # The backend owns the no-frame case, so a missing camera is its policy.
-    frame = vision.capture()
-    label, confidence = vision.classify(frame)
+    frames = vision.capture()
+    label, confidence = vision.classify(frames)
     category = _rules.resolve(label, confidence)
 
-    saved = _save_capture(frame, label, category)
+    saved = _save_capture(frames, label, category)
     _store.log(label, confidence, category)
 
-    where = f"saved {saved.name}" if saved else "no frame captured"
-    print(f"[bin] {label} ({confidence:.2f}) -> {category}, {where}")
+    where = f"saved {saved.name}" if saved else "no frames captured"
+    print(f"[bin] {len(frames)} frame(s): {label} ({confidence:.2f}) -> {category}, {where}")
 
     Bridge.call("set_feedback", category)
 

@@ -1,4 +1,5 @@
 import os
+
 import cv2
 import numpy as np
 
@@ -17,20 +18,18 @@ except ImportError:  # still importable as a standalone script
 # directory the app happens to be launched from.
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
-# Model interpreter cache (prevents reloading model weights on every call)
+# Loading weights costs far more than inference, so interpreters are cached.
 _INTERPRETER_CACHE = {}
 
 
 def _get_interpreter(model_name: str):
-    """Internal helper to load and cache TFLite interpreters dynamically."""
     if model_name in _INTERPRETER_CACHE:
         return _INTERPRETER_CACHE[model_name]
 
     if model_name not in USERCONFIG.MODEL_REGISTRY:
         raise ValueError(f"Model '{model_name}' not found in USERCONFIG.MODEL_REGISTRY.")
 
-    model_info = USERCONFIG.MODEL_REGISTRY[model_name]
-    model_path = model_info["model_path"]
+    model_path = USERCONFIG.MODEL_REGISTRY[model_name]["model_path"]
     if not os.path.isabs(model_path):
         model_path = os.path.normpath(os.path.join(_HERE, model_path))
 
@@ -43,11 +42,8 @@ def _get_interpreter(model_name: str):
     return interpreter
 
 
-# =============================================================================
-# CHUNK 1: Reshape & Wrap Image
-# =============================================================================
-def chunk_wrap_and_resize(image_input, target_width: int, target_height: int) -> np.ndarray:
-    """Accepts file path or BGR image array and resizes to target model shape."""
+def _wrap_and_resize(image_input, target_width: int, target_height: int) -> np.ndarray:
+    """Accept a file path or a BGR array; return an RGB frame at the model's size."""
     if isinstance(image_input, str):
         frame = cv2.imread(image_input)
         if frame is None:
@@ -58,161 +54,111 @@ def chunk_wrap_and_resize(image_input, target_width: int, target_height: int) ->
         raise TypeError("image_input must be a file path string or a numpy ndarray.")
 
     resized = cv2.resize(frame, (target_width, target_height))
-    rgb_frame = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
-    return rgb_frame
+    return cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
 
 
-# =============================================================================
-# CHUNK 2: Data Normalization
-# =============================================================================
-def chunk_normalize_data(rgb_frame: np.ndarray, input_details: dict) -> np.ndarray:
-    """Converts image datatype (UINT8, INT8, FP32) based on quantized model specs."""
+def _normalize(rgb_frame: np.ndarray, input_details: dict) -> np.ndarray:
+    """Match the tensor dtype the model was quantized for."""
     dtype = input_details['dtype']
 
     if dtype == np.uint8:
-        # Standard UINT8 quantized models [0, 255]
-        tensor = np.expand_dims(rgb_frame, axis=0).astype(np.uint8)
+        return np.expand_dims(rgb_frame, axis=0).astype(np.uint8)
 
-    elif dtype == np.int8:
-        # INT8 Quantized models [-128, 127]
+    if dtype == np.int8:
         scale, zero_point = input_details.get('quantization', (1.0, 0))
         if scale > 0:
             tensor = (rgb_frame / scale) + zero_point
         else:
             tensor = rgb_frame.astype(np.int16) - 128
-        tensor = np.expand_dims(tensor, axis=0).astype(np.int8)
+        return np.expand_dims(tensor, axis=0).astype(np.int8)
 
-    else:
-        # Float32 normalized models [0.0, 1.0]
-        tensor = np.expand_dims(rgb_frame, axis=0).astype(np.float32) / 255.0
-
-    return tensor
+    return np.expand_dims(rgb_frame, axis=0).astype(np.float32) / 255.0
 
 
-# =============================================================================
-# CHUNK 3: Run Inference
-# =============================================================================
-def chunk_run_inference(interpreter, tensor_data: np.ndarray, labels: list) -> dict:
-    """Executes model inference and returns raw detected object and confidence."""
+def _probabilities(interpreter, tensor_data: np.ndarray) -> np.ndarray:
+    """Run the model and return a probability vector over the label set."""
     input_details = interpreter.get_input_details()
     output_details = interpreter.get_output_details()
 
     interpreter.set_tensor(input_details[0]['index'], tensor_data)
     interpreter.invoke()
 
-    output_data = interpreter.get_tensor(output_details[0]['index'])[0]
+    output = interpreter.get_tensor(output_details[0]['index'])[0]
 
-    # Dequantize output if necessary
-    if output_details[0]['dtype'] in [np.int8, np.uint8]:
+    if output_details[0]['dtype'] in (np.int8, np.uint8):
         scale, zero_point = output_details[0]['quantization']
         if scale > 0:
-            output_data = scale * (output_data.astype(np.float32) - zero_point)
+            output = scale * (output.astype(np.float32) - zero_point)
 
-    # Convert logits to probabilities via Softmax if not normalized
-    if not np.isclose(np.sum(output_data), 1.0, atol=1e-2):
-        exp_scores = np.exp(output_data - np.max(output_data))
-        scores = exp_scores / np.sum(exp_scores)
-    else:
-        scores = output_data
+    # Only softmax when the output is not already a distribution.
+    if not np.isclose(np.sum(output), 1.0, atol=1e-2):
+        exp_scores = np.exp(output - np.max(output))
+        return exp_scores / np.sum(exp_scores)
 
-    top_idx = int(np.argmax(scores))
-    confidence = float(scores[top_idx])
-    detected_object = labels[top_idx] if top_idx < len(labels) else "unknown"
-
-    return {"object": detected_object, "confidence": confidence}
+    return output.astype(np.float32)
 
 
-# =============================================================================
-# CHUNK 4: Hash Table Lookup (Location Rules Engine)
-# =============================================================================
-def chunk_lookup_disposal_class(detected_object: str, confidence: float) -> str or None:
-    """Validates confidence against threshold and maps object to standard disposal class."""
-    if confidence < USERCONFIG.CONFIDENCE_THRESHOLD:
-        return None
+def _combine(prob_vectors, strategy: str) -> np.ndarray:
+    """Reduce several per-frame probability vectors to one.
 
-    country = USERCONFIG.COUNTRY
-    state = USERCONFIG.STATE
-    county = USERCONFIG.COUNTY
+    mean - average the distributions. The default: a label has to do well
+           across frames rather than get lucky on one, so a single blurred or
+           badly lit frame cannot carry the result.
+    max  - keep the vector whose top-1 was most confident. Useful when most
+           frames are poor but one is clean; also the most easily fooled,
+           since one confidently wrong frame wins outright.
+    vote - majority of per-frame argmax, scored by that label's mean
+           probability. Most robust to outliers, least informative when every
+           frame disagrees.
+    """
+    stacked = np.vstack(prob_vectors)
 
-    try:
-        county_map = USERCONFIG.LOCAL_RULES[country][state][county]
-        category = county_map.get(detected_object.lower(), None)
+    if strategy == "max":
+        return stacked[int(np.argmax(stacked.max(axis=1)))]
 
-        # Enforce strict 3-class system constraint ['Recyclable', 'Non-Recyclable', 'Hazardous']
-        if category in ['Recyclable', 'Non-Recyclable', 'Hazardous']:
-            return category
-        return None
+    if strategy == "vote":
+        winners = stacked.argmax(axis=1)
+        counts = np.bincount(winners, minlength=stacked.shape[1])
+        chosen = int(np.argmax(counts))
+        combined = np.zeros(stacked.shape[1], dtype=np.float32)
+        combined[chosen] = float(stacked[:, chosen].mean())
+        return combined
 
-    except KeyError:
-        # Location path not configured in hash table
-        return None
+    return stacked.mean(axis=0)
 
 
-# =============================================================================
-# ENTRY POINT USED BY THE ORCHESTRATOR
-# =============================================================================
+def classify_burst(frames, model_name: str = None, strategy: str = None):
+    """Classify several frames of the same item and return (label, confidence).
+
+    No disposal decision is made here. label -> category lives in
+    disposal_rules.yaml so policy can change without retraining.
+    """
+    if not frames:
+        return "unknown", 0.0
+
+    model = model_name or USERCONFIG.DEFAULT_MODEL_NAME
+    strategy = strategy or USERCONFIG.ENSEMBLE_STRATEGY
+
+    interpreter = _get_interpreter(model)
+    input_details = interpreter.get_input_details()[0]
+    labels = USERCONFIG.MODEL_REGISTRY[model]["labels"]
+
+    target_height = input_details['shape'][1]
+    target_width = input_details['shape'][2]
+
+    prob_vectors = [
+        _probabilities(interpreter, _normalize(
+            _wrap_and_resize(frame, target_width, target_height), input_details))
+        for frame in frames
+    ]
+
+    scores = _combine(prob_vectors, strategy)
+    top = int(np.argmax(scores))
+
+    label = labels[top] if top < len(labels) else "unknown"
+    return label, float(scores[top])
+
+
 def classify_raw(image_input, model_name: str = None):
-    """Return (label, confidence) and make no disposal decision.
-
-    Chunks 1-3 only. The label -> category step is deliberately skipped: that
-    mapping lives in disposal_rules.yaml so disposal policy can change without
-    retraining, and so the MCU's categories have a single source of truth.
-    """
-    selected_model = model_name if model_name else USERCONFIG.DEFAULT_MODEL_NAME
-
-    interpreter = _get_interpreter(selected_model)
-    input_details = interpreter.get_input_details()
-    labels = USERCONFIG.MODEL_REGISTRY[selected_model]["labels"]
-
-    target_height = input_details[0]['shape'][1]
-    target_width = input_details[0]['shape'][2]
-
-    rgb_frame = chunk_wrap_and_resize(image_input, target_width, target_height)
-    tensor_data = chunk_normalize_data(rgb_frame, input_details[0])
-    result = chunk_run_inference(interpreter, tensor_data, labels)
-
-    return result["object"], result["confidence"]
-
-
-# =============================================================================
-# ORIGINAL ENTRY POINT (kept for standalone use; returns a disposal class)
-# =============================================================================
-def classify_image(image_input, model_name: str = None) -> str or None:
-    """
-    Main entry point for external orchestrator.
-    
-    Inputs:
-        image_input: File path (str) OR cv2 BGR image array.
-        model_name (optional): String key for pretrained model.
-        
-    Returns:
-        One of ['Recyclable', 'Non-Recyclable', 'Hazardous'] or None.
-    """
-    selected_model = model_name if model_name else USERCONFIG.DEFAULT_MODEL_NAME
-    
-    # Load interpreter & configuration metadata
-    interpreter = _get_interpreter(selected_model)
-    input_details = interpreter.get_input_details()
-    labels = USERCONFIG.MODEL_REGISTRY[selected_model]["labels"]
-
-    # Target shape required by chosen model
-    target_height = input_details[0]['shape'][1]
-    target_width = input_details[0]['shape'][2]
-
-    # Pipeline execution through functional chunks
-    # Chunk 1: Reshape & wrap
-    rgb_frame = chunk_wrap_and_resize(image_input, target_width, target_height)
-
-    # Chunk 2: Normalize
-    tensor_data = chunk_normalize_data(rgb_frame, input_details[0])
-
-    # Chunk 3: Inference
-    inference_result = chunk_run_inference(interpreter, tensor_data, labels)
-
-    # Chunk 4: Location-based rule lookup
-    final_output = chunk_lookup_disposal_class(
-        detected_object=inference_result["object"],
-        confidence=inference_result["confidence"]
-    )
-
-    return final_output
+    """Single-frame convenience wrapper around classify_burst."""
+    return classify_burst([image_input], model_name=model_name)
