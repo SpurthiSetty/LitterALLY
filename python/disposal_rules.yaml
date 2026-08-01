@@ -1,46 +1,114 @@
 # Disposal policy. THE single source of truth for label -> category.
 #
-# Nothing else in the codebase maps objects to categories. The classifier
-# package used to carry its own LOCAL_RULES table and confidence threshold;
-# both were removed, because two tables that disagreed would silently produce
-# a category the MCU has no colour for.
+# Labels are ImageNet class names as emitted by mobilenet_imagenet, shortened to
+# the text before the first comma. ImageNet has a thousand classes and almost
+# all of them are irrelevant here - animals, vehicles, landscapes - so anything
+# not listed resolves to "unknown", which is the desired behaviour rather than a
+# gap: a photograph of a kitchen should not be assigned a bin.
 #
-# The labels below are the twelve classes the wastenet model actually emits, in
-# the order given by its labels.txt. A label the model never produces is dead
-# weight; one it produces that is missing here resolves to "unknown".
+# Two ImageNet names are traps and are placed by meaning, not by how they read:
+# "notebook" is a notebook computer and "mouse" is a computer mouse, so both are
+# e-waste rather than stationery.
 #
 # Category names are a contract with the MCU: sketch.ino has a matching
 # category -> colour/icon/tone table, so a change here needs a change there.
 
-min_confidence: 0.65
+min_confidence: 0.25
 
 categories:
   recycle:
     labels:
-      - cardboard
-      - paper
-      - plastic
-      - metal
-      - brown-glass
-      - green-glass
-      - white-glass
+      # glass and plastic containers
+      - beer bottle
+      - pop bottle
+      - water bottle
+      - wine bottle
+      - whiskey jug
+      - pill bottle
+      - water jug
+      - beer glass
+      - goblet
+      - vase
+      - bottlecap
+      # paper and card
+      - carton
+      - envelope
+      - packet
+      - binder
+      - book jacket
+      - paper towel
+      - toilet tissue
+      # metal
+      - milk can
+      - measuring cup
 
   compost:
     labels:
-      - biological
+      - banana
+      - orange
+      - lemon
+      - pineapple
+      - strawberry
+      - Granny Smith
+      - fig
+      - pomegranate
+      - custard apple
+      - jackfruit
+      - corn
+      - ear
+      - broccoli
+      - cauliflower
+      - zucchini
+      - cucumber
+      - artichoke
+      - bell pepper
+      - mushroom
+      - head cabbage
+      - bagel
+      - pretzel
+      - cheeseburger
+      - hotdog
+      - pizza
+      - mashed potato
 
   trash:
     labels:
-      - clothes
-      - shoes
-      - trash
+      - plastic bag
+      - lotion
+      - sunscreen
+      - soap dispenser
+      - Band Aid
+      - rubber eraser
 
   hazardous:
-    labels:
-      - battery
-
-  # No wastenet label maps to e-waste. The category is kept so its colour and
-  # icon stay defined, and so a model that can spot a phone or a cable needs a
-  # change only here.
-  ewaste:
+    # ImageNet has no battery class, so nothing reaches hazardous with this
+    # model. The category stays defined so its colour and icon survive, and so
+    # a model that can see a battery needs a change only here.
     labels: []
+
+  ewaste:
+    labels:
+      - cellular telephone
+      - dial telephone
+      - laptop
+      - notebook
+      - desktop computer
+      - hand-held computer
+      - computer keyboard
+      - mouse
+      - space bar
+      - monitor
+      - printer
+      - projector
+      - modem
+      - hard disc
+      - iPod
+      - CD player
+      - cassette
+      - cassette player
+      - tape player
+      - radio
+      - remote control
+      - joystick
+      - loudspeaker
+      - microphone

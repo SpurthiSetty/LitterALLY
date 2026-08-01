@@ -31,6 +31,33 @@ def set_logger(fn):
     _log = fn
 
 
+_LABEL_CACHE = {}
+
+
+def labels_for(model_name: str):
+    """Label list for a model, inline or from a file.
+
+    A thousand ImageNet labels do not belong in a config literal, and the file
+    ships beside the model. Only the text before the first comma is kept, so
+    "notebook, notebook computer" is referred to as "notebook".
+    """
+    if model_name in _LABEL_CACHE:
+        return _LABEL_CACHE[model_name]
+
+    info = USERCONFIG.MODEL_REGISTRY[model_name]
+    if "labels" in info:
+        labels = list(info["labels"])
+    else:
+        path = info["labels_file"]
+        if not os.path.isabs(path):
+            path = os.path.normpath(os.path.join(_HERE, path))
+        with open(path) as handle:
+            labels = [line.split(",")[0].strip() for line in handle if line.strip()]
+
+    _LABEL_CACHE[model_name] = labels
+    return labels
+
+
 def _get_interpreter(model_name: str):
     if model_name in _INTERPRETER_CACHE:
         return _INTERPRETER_CACHE[model_name]
@@ -150,7 +177,7 @@ def classify_burst(frames, model_name: str = None, strategy: str = None):
 
     interpreter = _get_interpreter(model)
     input_details = interpreter.get_input_details()[0]
-    labels = USERCONFIG.MODEL_REGISTRY[model]["labels"]
+    labels = labels_for(model)
 
     target_height = input_details['shape'][1]
     target_width = input_details['shape'][2]
