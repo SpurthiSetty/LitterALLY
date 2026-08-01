@@ -101,6 +101,17 @@ def _save_capture(frames, label, category):
 
     cv2.imwrite(str(path), frames[0])
     cv2.imwrite(str(CAPTURE_DIR / "latest.jpg"), frames[0])
+
+    # The full frame with the detection box drawn on it. Without this there is
+    # no way to tell a bad classification from a crop that missed the object.
+    if getattr(vision, "last_frame", None) is not None:
+        import detector
+
+        annotated = detector.draw_box(
+            vision.last_frame, vision.last_box, f"{label} {category}"
+        )
+        cv2.imwrite(str(CAPTURE_DIR / "latest_boxed.jpg"), annotated)
+
     return path
 
 

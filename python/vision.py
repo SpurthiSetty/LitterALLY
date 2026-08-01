@@ -110,13 +110,36 @@ def capture(count=None, distance_mm=None):
     return frames
 
 
+USE_DETECTOR = os.environ.get("SMARTBIN_DETECT", "1") != "0"
+
+# The last frame and box, so the orchestrator can save an annotated copy and the
+# crop stays inspectable when a result looks wrong.
+last_frame = None
+last_box = None
+
+
 def classify(frames):
     """Return (label, confidence) for a burst. The label -> category step is not ours.
 
     frames may be empty when the camera is missing or every read failed.
     """
+    global last_frame, last_box
+
     if not frames:
+        last_frame, last_box = None, None
         return UNKNOWN_LABEL, 0.0
+
+    last_frame, last_box = frames[0], None
+
+    if USE_DETECTOR:
+        import detector
+
+        # Detect once and reuse the box for the whole burst: the frames are
+        # milliseconds apart, so running the detector five times would cost
+        # five times as much to find the same object.
+        last_box = detector.find_item(frames[0])
+        if last_box is not None:
+            frames = [detector.crop_to(f, last_box) for f in frames]
 
     try:
         from classification import classify_burst

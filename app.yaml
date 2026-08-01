@@ -1,5 +1,11 @@
 name: SmartBin
-description: "Orchestrator: sensor trigger -> capture -> classify -> rules -> lights"
+description: "Orchestrator: sensor trigger -> detect -> crop -> classify -> lights"
 ports: []
-bricks: []
+bricks:
+  # Runs YOLOX in its own Edge Impulse service container. Needed because a
+  # classifier labels the whole frame: an AA battery covering 7% of the picture
+  # was read as "paper" from the white counter behind it, while the same battery
+  # filling a phone screen scored 0.99. Detecting first and classifying the crop
+  # is what closes that gap.
+  - arduino:object_detection
 icon: 🗑️
