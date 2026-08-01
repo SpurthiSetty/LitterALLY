@@ -16,8 +16,19 @@ Arduino_LED_Matrix matrix;
 const uint8_t MATRIX_WIDTH = 13;
 const uint8_t MATRIX_HEIGHT = 8;
 
-const int MIN_DEADZONE_MM = 30;               // below 3 cm the ToF reading is unreliable
-const int DIST_THRESHOLD_MM = 250;            // an item this close counts as presented
+// Presence uses hysteresis, not one threshold. An item resting near the edge
+// of the window sits on a single threshold and flips state every poll however
+// well it is filtered, which showed up as the sensor being "jittery": the
+// estimate hovered around 30 mm and IDLE/ARMING alternated at 10 Hz. Entering
+// requires being well inside the window; leaving requires being clearly out.
+const int NEAR_ENTER_MM = 45;                 // no nearer than this to arm
+const int NEAR_EXIT_MM = 25;                  // ...and nearer than this to disarm
+const int FAR_ENTER_MM = 240;                 // no further than this to arm
+const int FAR_EXIT_MM = 265;                  // ...and further than this to disarm
+
+// Readings below this are noise rather than a close target: a stray 1 mm
+// sample dragged the estimate down by 20 mm and inverted the velocity.
+const int MIN_VALID_MM = 15;
 const unsigned long HOLD_TIME_MS = 3000;      // how long it must be held still
 const unsigned long POLL_INTERVAL_MS = 100;   // 10 Hz
 const unsigned long FEEDBACK_TIMEOUT_MS = 4000;
@@ -332,7 +343,7 @@ void loop() {
     // 0 means the sensor had no valid target. Any other reading is real, even
     // one far outside the window - it is the threshold's job to decide whether
     // that counts as an item, not the filter's.
-    bool usable = (raw_mm > 0 && raw_mm < 4000);
+    bool usable = (raw_mm >= MIN_VALID_MM && raw_mm < 4000);
 
     if (!kInit) {
       if (usable) {
@@ -348,7 +359,11 @@ void loop() {
     }
 
     if (kInit && kMisses <= MAX_MISSES) {
-      itemPresent = (kx >= MIN_DEADZONE_MM && kx <= DIST_THRESHOLD_MM);
+      if (itemPresent) {
+        itemPresent = (kx >= NEAR_EXIT_MM && kx <= FAR_EXIT_MM);
+      } else {
+        itemPresent = (kx >= NEAR_ENTER_MM && kx <= FAR_ENTER_MM);
+      }
       if (itemPresent) {
         lastDistanceMm = (int)(kx + 0.5f);
       }
