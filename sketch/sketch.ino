@@ -131,6 +131,11 @@ const float PROC_VAR = 25.0f;     // how much true distance can change per tick
 const float GATE_SIGMA = 4.0f;    // reject jumps wilder than this as outliers
 const int MAX_MISSES = 3;         // ~300 ms unusable before the item counts as gone
 
+// Streams raw and filtered distance to the Linux log while an item is in play,
+// so the filter can be tuned against real sensor behaviour rather than guessed
+// at. Off costs nothing; on costs one notify per poll.
+const bool DEBUG_DISTANCE = true;
+
 float kx = 0.0f;                  // estimated distance, mm
 float kv = 0.0f;                  // estimated velocity, mm per tick
 float kP[2][2] = {{0, 0}, {0, 0}};
@@ -352,6 +357,16 @@ void loop() {
       if (kMisses > MAX_MISSES) {
         kalmanReset();
       }
+    }
+
+    if (DEBUG_DISTANCE && (state != IDLE || itemPresent)) {
+      Bridge.notify("host_log",
+                    "[mcu] raw=" + String(raw_mm) +
+                    " est=" + String(kInit ? (int)(kx + 0.5f) : -1) +
+                    " v=" + String(kv, 1) +
+                    " miss=" + String(kMisses) +
+                    " present=" + String(itemPresent ? 1 : 0) +
+                    " state=" + String((int)state));
     }
   }
 

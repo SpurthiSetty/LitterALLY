@@ -48,6 +48,16 @@ def on_trigger(distance_mm=0):
 Bridge.provide("on_trigger", on_trigger)
 
 
+def host_log(line):
+    # The MCU's own Monitor output only reaches App Lab's serial tab, which is
+    # invisible from the Linux logs. This is the way back.
+    print(line)
+    return True
+
+
+Bridge.provide("host_log", host_log)
+
+
 def _log(line):
     """Print locally and echo to the MCU serial monitor.
 
