@@ -1,11 +1,13 @@
 name: SmartBin
-description: "Orchestrator: sensor trigger -> detect -> crop -> classify -> lights"
+description: "Sensor -> capture -> classify -> lights, plus a chatbot over the log"
 ports: []
 bricks:
-  # Runs YOLOX in its own Edge Impulse service container. Needed because a
-  # classifier labels the whole frame: an AA battery covering 7% of the picture
-  # was read as "paper" from the white counter behind it, while the same battery
-  # filling a phone screen scored 0.99. Detecting first and classifying the crop
-  # is what closes that gap.
-  - arduino:object_detection
+  # Local LLM for the chat path. Runs in its own service container, so its
+  # latency is nowhere near the real-time path - the two share only the
+  # database.
+  - arduino:llm
+
+  # object_detection was here for the YOLOX crop. Removed: it found the room
+  # rather than the held item, the diff detector needs no service, and the
+  # container's memory is better spent on the model.
 icon: 🗑️

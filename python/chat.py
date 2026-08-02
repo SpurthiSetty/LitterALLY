@@ -140,11 +140,25 @@ class Chat:
     # -- model backends ----------------------------------------------------
 
     def _tool_list(self):
+        """Wrap the tools for the LLM brick, which is LangChain underneath.
+
+        Plain functions are rejected - the brick indexes them by a .name
+        attribute that only a LangChain tool carries. The docstring becomes the
+        description the model reads to choose between them, which is why those
+        are written as instructions.
+        """
+        from langchain_core.tools import StructuredTool
+
         return [
-            self.tools.what_has_the_bin_seen,
-            self.tools.recent_items,
-            self.tools.when_did_i_last_throw_out,
-            self.tools.how_do_i_dispose_of,
+            StructuredTool.from_function(
+                func=method, name=method.__name__, description=method.__doc__
+            )
+            for method in (
+                self.tools.what_has_the_bin_seen,
+                self.tools.recent_items,
+                self.tools.when_did_i_last_throw_out,
+                self.tools.how_do_i_dispose_of,
+            )
         ]
 
     def _local(self, question):
