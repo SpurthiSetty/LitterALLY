@@ -58,6 +58,17 @@ The bin's own rules did not cover this question, so answer it yourself.
 # long past the point of being useful, and generation time is linear in tokens.
 MAX_TOKENS = int(os.environ.get("SMARTBIN_CHAT_MAX_TOKENS", "128"))
 
+# Cloud. Off unless a key exists AND the caller allows it for that question:
+# leaving the device is a decision the user makes, not a consequence of the
+# local model struggling.
+CLOUD_KEY = os.environ.get("SMARTBIN_CLOUD_KEY", os.environ.get("API_KEY", ""))
+
+# Left empty so the brick chooses, which means Anthropic Claude. Naming a model
+# here only pins it to whatever was current when this was written - the first
+# attempt hardcoded claude-sonnet-4-5, which was already stale. Set this to
+# override: the brick also understands openai: and google: prefixes.
+CLOUD_MODEL = os.environ.get("SMARTBIN_CLOUD_MODEL", "")
+
 
 # Escalation. The rule is about privacy, not capability: the event log never
 # leaves the device, so anything answerable from it stays local no matter how
@@ -122,6 +133,7 @@ class Chat:
         self.tools = tools or ChatTools()
         self.backend = (backend or BACKEND).lower()
         self._llm = None
+        self._cloud_llm = None
 
     # -- offline backend ---------------------------------------------------
 
@@ -201,6 +213,36 @@ class Chat:
             )
         ]
 
+    def cloud_available(self):
+        """Whether a cloud answer is even possible - a key has to exist."""
+        return bool(CLOUD_KEY)
+
+    def _cloud(self):
+        """The cloud model, which does get tools.
+
+        Unlike the local fallback, a capable model can be trusted to read a
+        tool result and repeat it faithfully - that is what the 0.8B could not
+        do when it reported 20 items against 303. So the cloud path can answer
+        questions about the log that the router's patterns did not match,
+        rather than being limited to general knowledge.
+        """
+        if self._cloud_llm is None:
+            from arduino.app_bricks.cloud_llm import CloudLLM
+
+            options = {
+                "api_key": CLOUD_KEY,
+                "system_prompt": SYSTEM_PROMPT,
+                "tools": self._tool_list(),
+            }
+            if CLOUD_MODEL:
+                options["model"] = CLOUD_MODEL
+
+            self._cloud_llm = CloudLLM(**options)
+        return self._cloud_llm
+
+    def _cloud_stream(self, question):
+        yield from self._cloud().chat_stream(question)
+
     def _model(self):
         """The fallback model, deliberately without tools.
 
@@ -249,7 +291,7 @@ class Chat:
 
     # -- entry point -------------------------------------------------------
 
-    def ask_stream(self, question):
+    def ask_stream(self, question, allow_cloud=False):
         """Yield (kind, payload) as the answer is produced.
 
         Router answers arrive whole and instantly; model answers arrive a piece
@@ -275,19 +317,38 @@ class Chat:
             }
             return
 
-        yield "meta", {"backend": self.backend}
+        # Cloud and local are alternatives, not escalating tiers. If the cloud
+        # is permitted and configured it answers directly: running the 0.8B
+        # first would add tens of seconds to arrive at a worse answer. Local is
+        # what remains when the toggle is off, the key is missing, or the
+        # network is down - so the bin always answers something.
+        use_cloud = allow_cloud and self.cloud_available()
+        stream = self._cloud_stream if use_cloud else self._local_stream
+        chosen = "cloud" if use_cloud else self.backend
+
+        yield "meta", {"backend": chosen}
         produced = False
         try:
-            for piece in self._local_stream(question):
+            for piece in stream(question):
                 text = piece if isinstance(piece, str) else str(piece)
                 if text:
                     produced = True
                     yield "text", text
         except Exception as exc:
-            # The bin still answers when the model is unavailable: fall back to
-            # whatever the router had to say rather than showing nothing.
-            print(f"[chat] model unavailable ({exc})")
+            print(f"[chat] {chosen} unavailable ({exc})")
+            if not produced and use_cloud:
+                # Reaching the cloud failed; the local model is still here.
+                try:
+                    for piece in self._local_stream(question):
+                        text = piece if isinstance(piece, str) else str(piece)
+                        if text:
+                            produced = True
+                            yield "text", text
+                except Exception as inner:
+                    print(f"[chat] local unavailable too ({inner})")
             if not produced:
+                # Nothing answered, so say what the router had rather than
+                # showing a blank reply.
                 yield "text", answer
         yield "done", {"escalate": None}
 

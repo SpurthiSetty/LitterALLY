@@ -26,6 +26,10 @@
   .chips { padding: 0 18px 14px; display: flex; gap: 8px; flex-wrap: wrap; }
   .chips button { background: #23262c; color: #b9c0ca; font-size: 13px;
                   padding: 7px 12px; }
+  .cloud { display: flex; align-items: center; gap: 8px; padding: 0 18px 10px;
+           color: #8b929c; font-size: 13px; }
+  .cloud input { accent-color: #d9a441; }
+  .cloud b { color: #d9a441; }
 </style>
 
 <header><b>Smart Bin</b><span id="status">connecting…</span></header>
@@ -38,6 +42,11 @@
   <button>where does a laptop go</button>
   <button>how do I dispose of a mattress</button>
 </div>
+<label class="cloud">
+  <input type="checkbox" id="cloud">
+  <span>Ask the <b>cloud</b> when this bin has no answer — the question leaves the
+  device; your bin's records never do.</span>
+</label>
 <form id="f">
   <input id="q" placeholder="Ask about the bin…" autocomplete="off" autofocus>
   <button id="send">Ask</button>
@@ -77,7 +86,7 @@
       const r = await fetch('/', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question })
+        body: JSON.stringify({ question, allow_cloud: document.getElementById('cloud').checked })
       });
 
       // Newline-delimited JSON, read as it arrives. A chunk can be split
@@ -133,6 +142,12 @@
     const cov = d.coverage || {};
     document.getElementById('status').textContent =
       `${d.total_items} events · log from ${(cov.first_event || '?').slice(0, 16)}`;
+    if (!d.cloud_available) {
+      const box = document.getElementById('cloud');
+      box.disabled = true;
+      box.parentElement.lastElementChild.textContent =
+        'Cloud unavailable — no API key configured on the board.';
+    }
   }).catch(() => {
     document.getElementById('status').textContent = 'no data';
   });

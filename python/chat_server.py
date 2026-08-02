@@ -62,14 +62,18 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path.startswith("/api/summary"):
             tools = self.chat.tools
-            self._send(200, json.dumps(tools.what_has_the_bin_seen("all")))
+            summary = tools.what_has_the_bin_seen("all")
+            summary["cloud_available"] = self.chat.cloud_available()
+            self._send(200, json.dumps(summary))
         else:
             self._send(200, _UI.read_bytes(), "text/html; charset=utf-8")
 
     def do_POST(self):
         length = int(self.headers.get("Content-Length", 0))
         try:
-            question = json.loads(self.rfile.read(length) or b"{}").get("question", "")
+            body = json.loads(self.rfile.read(length) or b"{}")
+            question = body.get("question", "")
+            allow_cloud = bool(body.get("allow_cloud"))
         except json.JSONDecodeError:
             self._send(400, json.dumps({"error": "bad json"}))
             return
@@ -86,7 +90,7 @@ class Handler(BaseHTTPRequestHandler):
         backend, answer = "", ""
 
         try:
-            for kind, payload in self.chat.ask_stream(question):
+            for kind, payload in self.chat.ask_stream(question, allow_cloud=allow_cloud):
                 if kind == "meta":
                     backend = payload.get("backend", "")
                 elif kind == "text":

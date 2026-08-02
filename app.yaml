@@ -10,6 +10,12 @@ bricks:
   # database.
   - arduino:llm
 
+  # arduino:cloud_llm belongs here, but it hard-requires an Api_key variable at
+  # startup - without one the app will not load at all, and App Lab shows it
+  # unnamed and unstartable rather than simply running without cloud. Add the
+  # key in App Lab's brick credentials panel, then restore this line. All the
+  # code behind it - the toggle, the routing, the fallback - is already in place.
+
   # object_detection was here for the YOLOX crop. Removed: it found the room
   # rather than the held item, the diff detector needs no service, and the
   # container's memory is better spent on the model.
