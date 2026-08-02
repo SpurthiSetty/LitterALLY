@@ -36,6 +36,24 @@ Rules you must follow:
 - Be brief. One or two sentences unless asked for detail.
 """
 
+# Used for the fallback, which runs without tools and so cannot see the log.
+FALLBACK_PROMPT = """You are a helpful assistant built into a smart waste bin.
+
+The bin's own rules did not cover this question, so answer it yourself.
+
+- Answer disposal questions directly and practically. Say which bin or route
+  you would use, and mention that local rules vary.
+- Do not refuse ordinary questions about rubbish, and do not say you are unable
+  to help - answering them is your job.
+- The one thing you cannot do is look up what THIS bin has recorded. If asked
+  what it has seen or counted, say you cannot check that. Never invent figures.
+- Two sentences.
+"""
+
+# These answers are a sentence or two. The default of 512 lets the model run on
+# long past the point of being useful, and generation time is linear in tokens.
+MAX_TOKENS = int(os.environ.get("SMARTBIN_CHAT_MAX_TOKENS", "128"))
+
 
 # Escalation. The rule is about privacy, not capability: the event log never
 # leaves the device, so anything answerable from it stays local no matter how
@@ -179,14 +197,32 @@ class Chat:
             )
         ]
 
-    def _local(self, question):
+    def _model(self):
+        """The fallback model, deliberately without tools.
+
+        Binding tools cost two generation passes - one to choose a tool, one to
+        write the answer - and each pass re-read every tool schema first. That
+        was most of the 50 to 124 seconds. The model now only runs on questions
+        the router already failed to answer using those same tools, so offering
+        them again buys nothing and costs a whole pass.
+
+        The prompt changes accordingly: with no tools it has no access to the
+        bin's records, and must say so rather than invent figures. It once
+        reported 20 items where the log held 303.
+        """
         if self._llm is None:
             from arduino.app_bricks.llm import LargeLanguageModel
 
             self._llm = LargeLanguageModel(
-                system_prompt=SYSTEM_PROMPT, tools=self._tool_list()
+                system_prompt=FALLBACK_PROMPT, max_tokens=MAX_TOKENS
             )
-        return self._llm.chat(question), []
+        return self._llm
+
+    def _local(self, question):
+        return self._model().chat(question), []
+
+    def _local_stream(self, question):
+        yield from self._model().chat_stream(question)
 
     def _openai(self, question):
         # Developing against a real model on a laptop: point at Ollama or
@@ -208,6 +244,48 @@ class Chat:
         return reply.choices[0].message.content, []
 
     # -- entry point -------------------------------------------------------
+
+    def ask_stream(self, question):
+        """Yield (kind, payload) as the answer is produced.
+
+        Router answers arrive whole and instantly; model answers arrive a piece
+        at a time. Total time is unchanged for the model, but words appearing
+        after a few seconds reads as slow, whereas a blank screen for a minute
+        reads as broken.
+        """
+        question = (question or "").strip()
+        if not question:
+            yield "meta", {"backend": "offline"}
+            yield "text", "Ask me something about the bin."
+            yield "done", {"escalate": None}
+            return
+
+        answer, results, understood = self._offline(question)
+
+        if _answered(results) or self.backend not in ("local", "openai"):
+            yield "meta", {"backend": "offline"}
+            yield "text", answer
+            yield "done", {
+                "escalate": None if _answered(results)
+                else escalation_reason(question, results, understood)
+            }
+            return
+
+        yield "meta", {"backend": self.backend}
+        produced = False
+        try:
+            for piece in self._local_stream(question):
+                text = piece if isinstance(piece, str) else str(piece)
+                if text:
+                    produced = True
+                    yield "text", text
+        except Exception as exc:
+            # The bin still answers when the model is unavailable: fall back to
+            # whatever the router had to say rather than showing nothing.
+            print(f"[chat] model unavailable ({exc})")
+            if not produced:
+                yield "text", answer
+        yield "done", {"escalate": None}
 
     def ask(self, question):
         question = (question or "").strip()

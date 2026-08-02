@@ -79,13 +79,39 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ question })
       });
-      const d = await r.json();
+
+      // Newline-delimited JSON, read as it arrives. A chunk can be split
+      // across reads, so keep the tail until a newline completes it.
+      const reader = r.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '', backend = '', text = '', escalate = null, first = true;
+
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop();
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          const msg = JSON.parse(line);
+          if (msg.kind === 'meta') backend = msg.payload.backend;
+          else if (msg.kind === 'text') {
+            if (first) { clearInterval(tick); pending.textContent = ''; first = false; }
+            text += msg.payload;
+            pending.textContent = text;
+            log.scrollTop = log.scrollHeight;
+          } else if (msg.kind === 'done') escalate = msg.payload.escalate;
+          else if (msg.kind === 'error') { text += '\n[error] ' + msg.payload; pending.textContent = text; }
+        }
+      }
+
       clearInterval(tick);
-      pending.textContent = d.answer || d.error || '(no answer)';
-      note(`${d.backend} · ${Math.round((Date.now() - started) / 1000)}s`);
+      if (!text) pending.textContent = '(no answer)';
+      note(`${backend} · ${Math.round((Date.now() - started) / 1000)}s`);
       // Escalation is shown, not hidden: it is the moment a question would
       // leave the device.
-      if (d.escalate) note('would escalate to cloud — ' + d.escalate, 'escalate');
+      if (escalate) note('would escalate to cloud — ' + escalate, 'escalate');
     } catch (e) {
       clearInterval(tick);
       pending.textContent = 'server unreachable: ' + e.message;

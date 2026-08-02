@@ -49,10 +49,26 @@ class Handler(BaseHTTPRequestHandler):
             self._send(400, json.dumps({"error": "bad json"}))
             return
 
+        # Newline-delimited JSON rather than one document: the model produces
+        # its answer a piece at a time and the point is to show each piece as
+        # it arrives.
+        self.send_response(200)
+        self.send_header("Content-Type", "application/x-ndjson")
+        self.send_header("Cache-Control", "no-cache")
+        self.end_headers()
+
         try:
-            self._send(200, json.dumps(self.chat.ask(question), default=str))
+            for kind, payload in self.chat.ask_stream(question):
+                line = json.dumps({"kind": kind, "payload": payload}, default=str)
+                self.wfile.write((line + "\n").encode())
+                self.wfile.flush()  # without this the whole point is lost
         except Exception as exc:  # a broken tool must not kill the server
-            self._send(500, json.dumps({"error": str(exc)}))
+            try:
+                self.wfile.write(
+                    (json.dumps({"kind": "error", "payload": str(exc)}) + "\n").encode()
+                )
+            except Exception:
+                pass
 
     def log_message(self, *args):
         pass  # the default logger writes a line per request to stderr
