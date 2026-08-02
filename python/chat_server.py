@@ -11,6 +11,9 @@ Then open http://localhost:8090
 """
 
 import argparse
+import os
+import time
+from datetime import datetime, timezone
 import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -21,6 +24,28 @@ from rules import Rules
 from store import EventStore
 
 _UI = Path(__file__).with_name("chat_ui.html")
+
+# Every exchange, appended as JSON. Judging whether the answers are any good
+# was guesswork without a record of what was actually asked and returned.
+_TRANSCRIPT = Path(
+    os.environ.get("SMARTBIN_CHAT_LOG", Path(__file__).with_name("chat_log.jsonl"))
+)
+
+
+def _record(question, backend, seconds, answer):
+    entry = {
+        "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "question": question,
+        "backend": backend,
+        "seconds": round(seconds, 1),
+        "answer": answer.strip(),
+    }
+    print(f"[chat] {backend} {entry['seconds']}s  {question!r} -> {entry['answer'][:90]!r}")
+    try:
+        with _TRANSCRIPT.open("a") as handle:
+            handle.write(json.dumps(entry) + "\n")
+    except OSError:
+        pass  # a full disk must not take the chat down
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -57,18 +82,28 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-cache")
         self.end_headers()
 
+        started = time.monotonic()
+        backend, answer = "", ""
+
         try:
             for kind, payload in self.chat.ask_stream(question):
+                if kind == "meta":
+                    backend = payload.get("backend", "")
+                elif kind == "text":
+                    answer += payload
                 line = json.dumps({"kind": kind, "payload": payload}, default=str)
                 self.wfile.write((line + "\n").encode())
                 self.wfile.flush()  # without this the whole point is lost
         except Exception as exc:  # a broken tool must not kill the server
+            answer = answer or f"[error] {exc}"
             try:
                 self.wfile.write(
                     (json.dumps({"kind": "error", "payload": str(exc)}) + "\n").encode()
                 )
             except Exception:
                 pass
+        finally:
+            _record(question, backend, time.monotonic() - started, answer)
 
     def log_message(self, *args):
         pass  # the default logger writes a line per request to stderr

@@ -29,10 +29,21 @@ aliases:
     [banana, apple, orange, fruit, vegetable, peel, food, food scraps,
      leftovers, eggshell, egg shell, coffee grounds, tea bag, compost, organic]
   cardboard:
-    [box, cardboard box, packaging, cereal box, corrugated]
+    [box, cardboard box, carton, packaging, cereal box, corrugated, shipping box,
+     egg carton, pizza box, cardboard tube]
   paper:
+    # "notebook" is deliberately absent: it is at least as likely to mean a
+    # laptop, and a wrong confident answer is worse than falling through.
     [newspaper, magazine, envelope, receipt, letter, junk mail, printer paper,
-     notebook, book]
+     book, wrapping paper]
+  laptop:
+    [computer, macbook, pc]
+  phone:
+    [mobile, cellphone, cell phone, smartphone, iphone, android]
+  cable:
+    [wire, cord, usb cable, charging cable, lead]
+  charger:
+    [power adapter, adapter, plug, power brick]
   plastic:
     [bottle, plastic bottle, water bottle, tub, wrapper, plastic bag, packet,
      straw, container, cup]
@@ -76,7 +87,16 @@ categories:
     labels:
       - battery
 
-  # No wastenet label maps to e-waste. The category is kept so its colour and
-  # icon stay defined for a model that can see a phone or a cable.
+  # The classifier cannot produce any of these - wastenet has no e-waste class,
+  # so the camera will never light this category. They exist so the chatbot can
+  # still answer "where does a laptop go", which it otherwise handed to the
+  # language model, which replied "the third bin, with the lid closed".
   ewaste:
-    labels: []
+    labels:
+      - laptop
+      - phone
+      - cable
+      - charger
+      - headphones
+      - remote control
+      - circuit board
