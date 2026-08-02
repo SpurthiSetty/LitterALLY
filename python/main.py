@@ -183,4 +183,19 @@ def loop():
     _handle_trigger(distance_mm)
 
 
+# The chat path, on its own thread. Different deadlines entirely: a local model
+# takes tens of seconds while the classifier has four, and they share nothing
+# but the database file. A daemon thread so it cannot hold up shutdown.
+CHAT_PORT = int(os.environ.get("SMARTBIN_CHAT_PORT", "8090"))
+
+if os.environ.get("SMARTBIN_CHAT", "1") != "0":
+    import threading
+
+    from chat_server import serve
+
+    threading.Thread(
+        target=serve, kwargs={"port": CHAT_PORT}, daemon=True, name="chat"
+    ).start()
+
+
 App.run(user_loop=loop)

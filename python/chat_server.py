@@ -12,7 +12,7 @@ Then open http://localhost:8090
 
 import argparse
 import json
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from chat import Chat
@@ -58,21 +58,32 @@ class Handler(BaseHTTPRequestHandler):
         pass  # the default logger writes a line per request to stderr
 
 
+def serve(db=None, rules=None, port=8090, backend=None):
+    """Serve the chat UI. Blocks, so the orchestrator runs it on a thread.
+
+    Its own EventStore rather than the orchestrator's: the chat path is meant
+    to share nothing with the real-time path except the database file, and
+    SQLite is happy with a second reader.
+    """
+    store = EventStore(db) if db else EventStore()
+    rule_set = Rules(rules) if rules else Rules()
+    Handler.chat = Chat(tools=ChatTools(store=store, rules=rule_set), backend=backend)
+
+    print(f"[chat] backend {Handler.chat.backend}, {store.total()} events, port {port}")
+
+    # Threading, because a local model takes the better part of a minute to
+    # answer and a single-threaded server would refuse to serve the page - or
+    # anything else - for the whole of it.
+    ThreadingHTTPServer(("0.0.0.0", port), Handler).serve_forever()
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--db", default=None, help="path to smartbin.db")
     parser.add_argument("--rules", default=None, help="path to disposal_rules.yaml")
     parser.add_argument("--port", type=int, default=8090)
     args = parser.parse_args()
-
-    store = EventStore(args.db) if args.db else EventStore()
-    rules = Rules(args.rules) if args.rules else Rules()
-    Handler.chat = Chat(tools=ChatTools(store=store, rules=rules))
-
-    print(f"backend : {Handler.chat.backend}")
-    print(f"events  : {store.total()}   span {store.span()}")
-    print(f"serving : http://localhost:{args.port}")
-    HTTPServer(("0.0.0.0", args.port), Handler).serve_forever()
+    serve(db=args.db, rules=args.rules, port=args.port)
 
 
 if __name__ == "__main__":

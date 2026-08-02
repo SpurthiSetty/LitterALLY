@@ -66,6 +66,13 @@
     if (!question.trim()) return;
     add(question, 'you');
     document.getElementById('send').disabled = true;
+    // The local model takes the better part of a minute on this hardware, so
+    // say so rather than leaving the page looking broken.
+    const pending = add('thinking…', 'bin');
+    const started = Date.now();
+    const tick = setInterval(() => {
+      pending.textContent = `thinking… ${Math.round((Date.now() - started) / 1000)}s`;
+    }, 1000);
     try {
       const r = await fetch('/', {
         method: 'POST',
@@ -73,12 +80,15 @@
         body: JSON.stringify({ question })
       });
       const d = await r.json();
-      add(d.answer || d.error || '(no answer)', 'bin');
+      clearInterval(tick);
+      pending.textContent = d.answer || d.error || '(no answer)';
+      note(`${d.backend} · ${Math.round((Date.now() - started) / 1000)}s`);
       // Escalation is shown, not hidden: it is the moment a question would
       // leave the device.
       if (d.escalate) note('would escalate to cloud — ' + d.escalate, 'escalate');
     } catch (e) {
-      add('server unreachable: ' + e.message, 'bin');
+      clearInterval(tick);
+      pending.textContent = 'server unreachable: ' + e.message;
     }
     document.getElementById('send').disabled = false;
     document.getElementById('q').focus();

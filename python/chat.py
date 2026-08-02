@@ -20,7 +20,7 @@ import re
 
 from chat_tools import ChatTools
 
-BACKEND = os.environ.get("SMARTBIN_CHAT_BACKEND", "offline")
+BACKEND = os.environ.get("SMARTBIN_CHAT_BACKEND", "local")
 
 SYSTEM_PROMPT = """You are the assistant built into a smart waste bin.
 
@@ -56,6 +56,23 @@ def escalation_reason(question, results, understood=True):
     return None
 
 
+def _answered(results):
+    """Did the router actually find something, as opposed to drawing a blank?
+
+    A disposal lookup that came back known=false has not answered - the bin has
+    no rule for that item - so it should fall through to the model rather than
+    be reported as the final word.
+    """
+    for result in results:
+        if result.get("total_items"):
+            return True
+        if result.get("items"):
+            return True
+        if result.get("known"):
+            return True
+    return False
+
+
 _DISPOSAL = re.compile(
     r"\b(dispose|throw away|bin|recycle|compost|where does|which bin|what do i do with)\b",
     re.I,
@@ -68,8 +85,9 @@ def _subject(question):
     """Pull the thing being asked about out of a plain-English question."""
     text = re.sub(r"[?.!]", " ", question)
     text = re.sub(
-        r"\b(how|do|i|dispose|of|a|an|the|my|this|that|where|does|go|should|put|"
-        r"which|bin|for|what|to|with|is|are|can|recycle|throw|away)\b",
+        r"\b(how|do|i|dispose|of|a|an|the|my|this|that|where|does|go|goes|going|"
+        r"should|put|which|bin|bins|for|what|to|into|in|on|with|is|are|am|can|"
+        r"recycle|recycled|throw|thrown|throwing|away|out)\b",
         " ",
         text,
         flags=re.I,
@@ -196,17 +214,42 @@ class Chat:
         if not question:
             return {"answer": "Ask me something about the bin.", "escalate": None}
 
-        understood = True
+        # The router runs first whatever the backend, because when it can answer
+        # it is both instant and incapable of misreporting a figure - the number
+        # is read from the database and printed, with no step in between that
+        # could corrupt it. Asked what had been thrown out today, the model said
+        # 20 items where the log holds 303, after 124 seconds. That is the worst
+        # kind of wrong: fluent, confident, and about the user's own data.
+        answer, results, understood = self._offline(question)
+
+        if _answered(results):
+            return {
+                "answer": answer,
+                "backend": "offline",
+                "escalate": None,
+                "tool_results": results,
+            }
+
+        # Past here the router has nothing, so the model earns its latency:
+        # unanticipated phrasings, and questions that need more than a lookup.
         if self.backend == "local":
-            answer, results = self._local(question)
+            answer, _ = self._local(question)
         elif self.backend == "openai":
-            answer, results = self._openai(question)
+            answer, _ = self._openai(question)
         else:
-            answer, results, understood = self._offline(question)
+            return {
+                "answer": answer,
+                "backend": "offline",
+                "escalate": escalation_reason(question, results, understood),
+                "tool_results": results,
+            }
 
         return {
             "answer": answer,
             "backend": self.backend,
-            "escalate": escalation_reason(question, results, understood),
-            "tool_results": results,
+            # No escalation signal from a model backend: it does its own tool
+            # calling, so there are no results here to judge. Reporting one
+            # anyway meant every single answer claimed it would escalate.
+            "escalate": None,
+            "tool_results": [],
         }

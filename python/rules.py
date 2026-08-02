@@ -18,6 +18,14 @@ class Rules:
             for label in (spec.get("labels") or [])
         }
 
+        # Everyday word -> model label. Only the chat path consults these; the
+        # classifier emits model labels and never sees them.
+        self._aliases = {
+            word.lower(): label
+            for label, words in (doc.get("aliases") or {}).items()
+            for word in words
+        }
+
     def resolve(self, label, confidence):
         if confidence < self.min_confidence:
             return UNKNOWN
@@ -44,10 +52,20 @@ class Rules:
             return []
 
         exact = [label for label in self._by_label if label.lower() == needle]
+        if not exact and needle in self._aliases:
+            exact = [self._aliases[needle]]
+
+        # Longest alias first, so "plastic bottle" is not decided by "bottle".
+        if not exact:
+            for word in sorted(self._aliases, key=len, reverse=True):
+                if word in needle:
+                    exact = [self._aliases[word]]
+                    break
+
         partial = [
             label
             for label in self._by_label
-            if label.lower() != needle
+            if label not in exact
             and (needle in label.lower() or label.lower() in needle)
         ]
         return exact + sorted(partial)

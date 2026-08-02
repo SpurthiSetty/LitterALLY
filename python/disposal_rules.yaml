@@ -19,6 +19,38 @@
 # about half the time; 0.50 accepts them while still turning away most noise.
 min_confidence: 0.50
 
+# Everyday words for the labels above, used only by the chatbot - the
+# classifier never sees these. Nobody asks which bin "biological" goes in; they
+# ask about a banana. Without this the question falls through to the language
+# model, which answered "recycle" for a banana, so the aliases are not
+# convenience but correctness.
+aliases:
+  biological:
+    [banana, apple, orange, fruit, vegetable, peel, food, food scraps,
+     leftovers, eggshell, egg shell, coffee grounds, tea bag, compost, organic]
+  cardboard:
+    [box, cardboard box, packaging, cereal box, corrugated]
+  paper:
+    [newspaper, magazine, envelope, receipt, letter, junk mail, printer paper,
+     notebook, book]
+  plastic:
+    [bottle, plastic bottle, water bottle, tub, wrapper, plastic bag, packet,
+     straw, container, cup]
+  metal:
+    [can, tin, tin can, aluminium, aluminum, foil, drink can, soda can]
+  battery:
+    [batteries, aa, aaa, aa battery, 9v, coin cell, cell]
+  clothes:
+    [shirt, t-shirt, clothing, cloth, fabric, textile, jumper, trousers]
+  shoes:
+    [shoe, trainers, sneakers, boots]
+  brown-glass:
+    [brown glass, beer bottle]
+  green-glass:
+    [green glass, wine bottle]
+  white-glass:
+    [glass, clear glass, glass bottle, jar, glass jar]
+
 categories:
   recycle:
     labels:
