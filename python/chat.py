@@ -18,6 +18,7 @@ Backends, chosen with SMARTBIN_CHAT_BACKEND:
 import os
 import re
 import threading
+from pathlib import Path
 
 from chat_tools import ChatTools
 
@@ -44,12 +45,12 @@ Rules you must follow:
 # go in a household bin at all, and saying so is the useful answer.
 CLOUD_PROMPT = """You are the assistant built into a smart waste bin.
 
-Use the tools to answer questions about what this bin has recorded and about
-its own disposal rules. Report what a tool returns exactly - never adjust or
-round a figure, and never state a count the tools did not give you.
+The bin's own rules did not cover this question, so answer it from general
+knowledge. You cannot see what the bin has recorded - if asked what it has
+counted or thrown out, say you cannot check that and never invent a figure.
 
-When a tool reports known=false, this bin has no rule for that item. Say so,
-then give genuinely useful real-world advice. Plenty of things - mattresses,
+Say plainly when something does not belong in this bin at all, then give
+genuinely useful real-world advice. Plenty of things - mattresses,
 furniture, appliances, paint, medicines - belong in none of this bin's
 categories and need bulky waste collection, a recycling centre, or a take-back
 scheme. Never force an item into one of the five categories just because they
@@ -85,13 +86,40 @@ MAX_TOKENS = int(os.environ.get("SMARTBIN_CHAT_MAX_TOKENS", "128"))
 # Cloud. Off unless a key exists AND the caller allows it for that question:
 # leaving the device is a decision the user makes, not a consequence of the
 # local model struggling.
-CLOUD_KEY = os.environ.get("SMARTBIN_CLOUD_KEY", os.environ.get("API_KEY", ""))
+#
+# The cloud_llm brick is deliberately not used. It hard-requires an Api_key
+# variable, so the app will not load without one, and that key lives in App Lab
+# configuration which "arduino-app-cli app start" cannot see - the app then
+# runs from the UI but fails over SSH. Talking to an OpenAI-compatible endpoint
+# ourselves avoids both, and works with any provider: OpenRouter, Together,
+# Groq, or a local Ollama.
+CLOUD_BASE_URL = os.environ.get(
+    "SMARTBIN_CLOUD_URL", "https://openrouter.ai/api/v1"
+)
+
+# Kept out of the repository. An environment variable if one is set, otherwise
+# a file beside this one that .gitignore excludes - the board can hold a key
+# without it ever reaching git.
+_KEY_FILE = Path(__file__).with_name(".cloud_key")
+
+
+def _read_key():
+    key = os.environ.get("SMARTBIN_CLOUD_KEY") or os.environ.get("API_KEY", "")
+    if key:
+        return key.strip()
+    try:
+        return _KEY_FILE.read_text().strip()
+    except OSError:
+        return ""
+
+
+CLOUD_KEY = _read_key()
 
 # Left empty so the brick chooses, which means Anthropic Claude. Naming a model
 # here only pins it to whatever was current when this was written - the first
 # attempt hardcoded claude-sonnet-4-5, which was already stale. Set this to
 # override: the brick also understands openai: and google: prefixes.
-CLOUD_MODEL = os.environ.get("SMARTBIN_CLOUD_MODEL", "")
+CLOUD_MODEL = os.environ.get("SMARTBIN_CLOUD_MODEL", "openai/gpt-oss-20b:free")
 
 
 # Escalation. The rule is about privacy, not capability: the event log never
@@ -247,30 +275,42 @@ class Chat:
         return bool(CLOUD_KEY)
 
     def _cloud(self):
-        """The cloud model, which does get tools.
+        """An OpenAI-compatible client, pointed wherever CLOUD_BASE_URL says.
 
-        Unlike the local fallback, a capable model can be trusted to read a
-        tool result and repeat it faithfully - that is what the 0.8B could not
-        do when it reported 20 items against 303. So the cloud path can answer
-        questions about the log that the router's patterns did not match,
-        rather than being limited to general knowledge.
+        Any provider speaking that API works - OpenRouter, Groq, Together, or
+        Ollama on a laptop - so the choice of model is configuration rather
+        than code.
         """
         if self._cloud_llm is None:
-            from arduino.app_bricks.cloud_llm import CloudLLM
+            from openai import OpenAI
 
-            options = {
-                "api_key": CLOUD_KEY,
-                "system_prompt": CLOUD_PROMPT,
-                "tools": self._tool_list(),
-            }
-            if CLOUD_MODEL:
-                options["model"] = CLOUD_MODEL
-
-            self._cloud_llm = CloudLLM(**options)
+            self._cloud_llm = OpenAI(base_url=CLOUD_BASE_URL, api_key=CLOUD_KEY)
         return self._cloud_llm
 
     def _cloud_stream(self, question):
-        yield from self._cloud().chat_stream(question)
+        """Stream a cloud answer.
+
+        No tools here, deliberately. The cloud path is reached only for
+        questions the router could not answer, and the router has already tried
+        every tool - so the model is being asked for general knowledge, not for
+        the bin's records. That also keeps this to one request instead of a
+        tool-calling loop.
+        """
+        stream = self._cloud().chat.completions.create(
+            model=CLOUD_MODEL,
+            messages=[
+                {"role": "system", "content": CLOUD_PROMPT},
+                {"role": "user", "content": question},
+            ],
+            max_tokens=MAX_TOKENS * 2,
+            stream=True,
+        )
+        for chunk in stream:
+            if not chunk.choices:
+                continue
+            piece = chunk.choices[0].delta.content
+            if piece:
+                yield piece
 
     def _model(self):
         """The fallback model, deliberately without tools.

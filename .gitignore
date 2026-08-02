@@ -15,3 +15,6 @@ python/classification/models/
 
 # App Lab sketch build artifacts (~490 MB on the board).
 .cache/
+
+# Cloud API key. Never committed.
+python/.cloud_key
