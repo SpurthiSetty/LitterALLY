@@ -10,11 +10,17 @@ bricks:
   # database.
   - arduino:llm
 
-  # arduino:cloud_llm belongs here, but it hard-requires an Api_key variable at
-  # startup - without one the app will not load at all, and App Lab shows it
-  # unnamed and unstartable rather than simply running without cloud. Add the
-  # key in App Lab's brick credentials panel, then restore this line. All the
-  # code behind it - the toggle, the routing, the fallback - is already in place.
+  # arduino:cloud_llm goes here to enable the cloud path. Two things to know
+  # before re-adding it:
+  #
+  #  - it hard-requires an Api_key variable, and the app will not load at all
+  #    without one, showing up unnamed and unstartable in App Lab;
+  #  - the key lives in App Lab's brick configuration, which "arduino-app-cli
+  #    app start" does not load. With this line present the app runs only when
+  #    started from App Lab, not over SSH.
+  #
+  # Everything behind it is written and committed: the UI toggle, the routing,
+  # and the fallback to the local model.
 
   # object_detection was here for the YOLOX crop. Removed: it found the room
   # rather than the held item, the diff detector needs no service, and the

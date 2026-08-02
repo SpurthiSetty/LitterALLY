@@ -17,6 +17,7 @@ Backends, chosen with SMARTBIN_CHAT_BACKEND:
 
 import os
 import re
+import threading
 
 from chat_tools import ChatTools
 
@@ -34,6 +35,29 @@ Rules you must follow:
 - If a tool reports known=false, say plainly that this bin has no rule for that
   item. Do not invent one, and do not assume it is general rubbish.
 - Be brief. One or two sentences unless asked for detail.
+"""
+
+# The cloud model gets the tools, so it can read the log - but it is reached
+# only for questions the router could not answer, which are mostly items the
+# bin has no rule for. Given SYSTEM_PROMPT it treated the five categories as
+# the only possible answers and put a mattress in recycle. A mattress does not
+# go in a household bin at all, and saying so is the useful answer.
+CLOUD_PROMPT = """You are the assistant built into a smart waste bin.
+
+Use the tools to answer questions about what this bin has recorded and about
+its own disposal rules. Report what a tool returns exactly - never adjust or
+round a figure, and never state a count the tools did not give you.
+
+When a tool reports known=false, this bin has no rule for that item. Say so,
+then give genuinely useful real-world advice. Plenty of things - mattresses,
+furniture, appliances, paint, medicines - belong in none of this bin's
+categories and need bulky waste collection, a recycling centre, or a take-back
+scheme. Never force an item into one of the five categories just because they
+are the options on offer; recommending the wrong bin is worse than saying the
+bin cannot take it.
+
+Local collection rules vary, so say so where it matters. Two or three
+sentences.
 """
 
 # Used for the fallback, which runs without tools and so cannot see the log.
@@ -134,6 +158,11 @@ class Chat:
         self.backend = (backend or BACKEND).lower()
         self._llm = None
         self._cloud_llm = None
+        # The brick refuses a second stream while one is running - "a streaming
+        # response is already in progress" - and the server is threaded, so two
+        # browser tabs or an overlapping request were enough to fail both and
+        # take the app down. One model call at a time.
+        self._model_lock = threading.Lock()
 
     # -- offline backend ---------------------------------------------------
 
@@ -231,7 +260,7 @@ class Chat:
 
             options = {
                 "api_key": CLOUD_KEY,
-                "system_prompt": SYSTEM_PROMPT,
+                "system_prompt": CLOUD_PROMPT,
                 "tools": self._tool_list(),
             }
             if CLOUD_MODEL:
@@ -326,6 +355,14 @@ class Chat:
         stream = self._cloud_stream if use_cloud else self._local_stream
         chosen = "cloud" if use_cloud else self.backend
 
+        if not self._model_lock.acquire(timeout=2):
+            yield "meta", {"backend": "offline"}
+            yield "text", ("The model is answering someone else's question. "
+                           "Try again in a moment - or ask something the bin "
+                           "can look up directly, which never waits.")
+            yield "done", {"escalate": None}
+            return
+
         yield "meta", {"backend": chosen}
         produced = False
         try:
@@ -350,6 +387,8 @@ class Chat:
                 # Nothing answered, so say what the router had rather than
                 # showing a blank reply.
                 yield "text", answer
+        finally:
+            self._model_lock.release()
         yield "done", {"escalate": None}
 
     def ask(self, question):
