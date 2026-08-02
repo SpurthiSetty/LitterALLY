@@ -17,6 +17,15 @@
 # Correct answers on real items have measured between 0.44 and 0.92, and empty
 # scenes between 0.30 and 0.60. A floor of 0.65 was rejecting correct answers
 # about half the time; 0.50 accepts them while still turning away most noise.
+# Where this bin is. Collection rules are local - what is kerbside recycling in
+# one city is a special drop-off in the next - so the chatbot is told, and can
+# name real services instead of saying "check with your council". Policy, so it
+# lives here rather than in code.
+#
+# The ZIP matters: 92121 is inside City of San Diego limits, which runs a
+# different collection service from the wider county.
+location: "San Diego, California, USA (ZIP 92121, City of San Diego)"
+
 min_confidence: 0.50
 
 # Everyday words for the labels above, used only by the chatbot - the

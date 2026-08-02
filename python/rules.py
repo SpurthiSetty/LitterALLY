@@ -11,6 +11,8 @@ class Rules:
     def __init__(self, path=_RULES_FILE):
         doc = yaml.safe_load(Path(path).read_text())
         self.min_confidence = float(doc["min_confidence"])
+        # Passed to the chatbot so it can give advice for the right city.
+        self.location = (doc.get("location") or "").strip()
         self.categories = tuple(doc["categories"])
         self._by_label = {
             label: category

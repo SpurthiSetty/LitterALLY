@@ -120,6 +120,7 @@ CLOUD_KEY = _read_key()
 # attempt hardcoded claude-sonnet-4-5, which was already stale. Set this to
 # override: the brick also understands openai: and google: prefixes.
 CLOUD_MODEL = os.environ.get("SMARTBIN_CLOUD_MODEL", "openai/gpt-oss-20b:free")
+CLOUD_MAX_TOKENS = int(os.environ.get("SMARTBIN_CLOUD_MAX_TOKENS", "1024"))
 
 
 # Escalation. The rule is about privacy, not capability: the event log never
@@ -274,6 +275,23 @@ class Chat:
         """Whether a cloud answer is even possible - a key has to exist."""
         return bool(CLOUD_KEY)
 
+    def _located(self, prompt):
+        """Append the bin's location, so advice can name real local services.
+
+        Left in the rules file rather than the prompt because it is policy: a
+        bin shipped elsewhere changes one line of YAML, not code.
+        """
+        where = getattr(self.tools, "location", "")
+        if not where:
+            return prompt
+        return (
+            prompt
+            + f"\nThis bin is in {where}. Give advice for that area "
+            "specifically - name the actual service, programme or facility "
+            "where you know it, rather than saying to check with the council. "
+            "If you are unsure whether something applies there, say so.\n"
+        )
+
     def _cloud(self):
         """An OpenAI-compatible client, pointed wherever CLOUD_BASE_URL says.
 
@@ -299,10 +317,14 @@ class Chat:
         stream = self._cloud().chat.completions.create(
             model=CLOUD_MODEL,
             messages=[
-                {"role": "system", "content": CLOUD_PROMPT},
+                {"role": "system", "content": self._located(CLOUD_PROMPT)},
                 {"role": "user", "content": question},
             ],
-            max_tokens=MAX_TOKENS * 2,
+            # Far above the local cap. gpt-oss-20b is a reasoning model: it
+            # spends tokens thinking before any visible content appears, and at
+            # 256 it used the whole budget on reasoning and streamed back an
+            # empty answer. Cloud tokens are not the scarce resource here.
+            max_tokens=CLOUD_MAX_TOKENS,
             stream=True,
         )
         for chunk in stream:
@@ -329,7 +351,7 @@ class Chat:
             from arduino.app_bricks.llm import LargeLanguageModel
 
             self._llm = LargeLanguageModel(
-                system_prompt=FALLBACK_PROMPT, max_tokens=MAX_TOKENS
+                system_prompt=self._located(FALLBACK_PROMPT), max_tokens=MAX_TOKENS
             )
         return self._llm
 

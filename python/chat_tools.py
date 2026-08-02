@@ -30,6 +30,8 @@ class ChatTools:
     def __init__(self, store=None, rules=None):
         self._store = store or EventStore()
         self._rules = rules or Rules()
+        # Where the bin is, for advice that can name local services.
+        self.location = getattr(self._rules, "location", "")
 
     # -- helpers ----------------------------------------------------------
 
