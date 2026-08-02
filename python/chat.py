@@ -93,8 +93,13 @@ MAX_TOKENS = int(os.environ.get("SMARTBIN_CHAT_MAX_TOKENS", "128"))
 # runs from the UI but fails over SSH. Talking to an OpenAI-compatible endpoint
 # ourselves avoids both, and works with any provider: OpenRouter, Together,
 # Groq, or a local Ollama.
+# Google AI Studio, which speaks the OpenAI API and has a free tier with a
+# per-user quota. OpenRouter's free models were tried first and share one pool
+# across all its users, so the provider returned 429 "rate-limited upstream"
+# and the same question took anywhere from 3 to 68 seconds. Any compatible
+# endpoint works here - OpenRouter, Groq, Together, or Ollama on a laptop.
 CLOUD_BASE_URL = os.environ.get(
-    "SMARTBIN_CLOUD_URL", "https://openrouter.ai/api/v1"
+    "SMARTBIN_CLOUD_URL", "https://generativelanguage.googleapis.com/v1beta/openai/"
 )
 
 # Kept out of the repository. An environment variable if one is set, otherwise
@@ -115,20 +120,27 @@ def _read_key():
 
 CLOUD_KEY = _read_key()
 
-# Left empty so the brick chooses, which means Anthropic Claude. Naming a model
-# here only pins it to whatever was current when this was written - the first
-# attempt hardcoded claude-sonnet-4-5, which was already stale. Set this to
-# override: the brick also understands openai: and google: prefixes.
-# A plain instruct model, and one that is actually free. Rejected along the
-# way: gpt-oss-20b reasons before answering, costing 36-55s and sometimes
-# spending the whole budget on thinking so the stream ended having said
-# nothing; llama-3.3-70b was no faster on the free tier and answered worse;
-# llama-3.1-8b is not free. Deciding which bin something goes in needs neither
-# deliberation nor a very large model.
-CLOUD_MODEL = os.environ.get(
-    "SMARTBIN_CLOUD_MODEL", "google/gemma-4-31b-it:free"
-)
+# An alias, not a version. Pinning a name has gone wrong twice already:
+# claude-sonnet-4-5 was stale the day it was written, and gemini-2.5-flash came
+# back "no longer available to new users". The alias tracks whatever is current.
+#
+# lite because deciding which bin something goes in needs no deliberation.
+# gpt-oss-20b, a reasoning model, spent its entire token budget thinking and
+# sometimes finished having said nothing at all.
+CLOUD_MODEL = os.environ.get("SMARTBIN_CLOUD_MODEL", "gemini-flash-lite-latest")
 CLOUD_MAX_TOKENS = int(os.environ.get("SMARTBIN_CLOUD_MAX_TOKENS", "1024"))
+
+
+def _provider_options():
+    """Extras only some providers understand.
+
+    The OpenAI API is a common shape, not a common feature set: every provider
+    adds its own fields and rejects the others outright, so these cannot simply
+    always be sent.
+    """
+    if "openrouter" in CLOUD_BASE_URL:
+        return {"extra_body": {"reasoning": {"effort": "low"}}}
+    return {}
 
 
 # Escalation. The rule is about privacy, not capability: the event log never
@@ -334,12 +346,12 @@ class Chat:
             # empty answer. Cloud tokens are not the scarce resource here.
             max_tokens=CLOUD_MAX_TOKENS,
             stream=True,
-            # gpt-oss is a reasoning model, and reasoning arrives in a separate
-            # field from the answer. Left alone it would spend the whole budget
-            # thinking and finish having emitted no content at all - a stream
-            # that completes successfully and says nothing. Low effort is
-            # plenty for "which bin does this go in".
-            extra_body={"reasoning": {"effort": "low"}},
+            # "reasoning" is an OpenRouter extension, and sending it to Google
+            # fails the whole request with "Unknown name reasoning: Cannot find
+            # field". It is only needed for reasoning models like gpt-oss,
+            # which otherwise spend their entire budget thinking and finish
+            # having emitted nothing.
+            **_provider_options(),
         )
         for chunk in stream:
             if not chunk.choices:
