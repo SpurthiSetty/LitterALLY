@@ -119,7 +119,15 @@ CLOUD_KEY = _read_key()
 # here only pins it to whatever was current when this was written - the first
 # attempt hardcoded claude-sonnet-4-5, which was already stale. Set this to
 # override: the brick also understands openai: and google: prefixes.
-CLOUD_MODEL = os.environ.get("SMARTBIN_CLOUD_MODEL", "openai/gpt-oss-20b:free")
+# A plain instruct model, and one that is actually free. Rejected along the
+# way: gpt-oss-20b reasons before answering, costing 36-55s and sometimes
+# spending the whole budget on thinking so the stream ended having said
+# nothing; llama-3.3-70b was no faster on the free tier and answered worse;
+# llama-3.1-8b is not free. Deciding which bin something goes in needs neither
+# deliberation nor a very large model.
+CLOUD_MODEL = os.environ.get(
+    "SMARTBIN_CLOUD_MODEL", "google/gemma-4-31b-it:free"
+)
 CLOUD_MAX_TOKENS = int(os.environ.get("SMARTBIN_CLOUD_MAX_TOKENS", "1024"))
 
 
@@ -449,6 +457,11 @@ class Chat:
             # only recovered from exceptions and returned a blank reply.
             if not produced and use_cloud:
                 print("[chat] cloud gave nothing, trying the local model")
+                # Correct the label. It is emitted before the call, so a cloud
+                # attempt that fails and is answered locally was still being
+                # reported as "cloud" - which made the local model's mistakes
+                # look like the cloud's.
+                yield "meta", {"backend": "local (cloud unavailable)"}
                 try:
                     for piece in self._local_stream(question):
                         text = piece if isinstance(piece, str) else str(piece)
