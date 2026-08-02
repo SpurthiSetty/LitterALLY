@@ -326,6 +326,12 @@ class Chat:
             # empty answer. Cloud tokens are not the scarce resource here.
             max_tokens=CLOUD_MAX_TOKENS,
             stream=True,
+            # gpt-oss is a reasoning model, and reasoning arrives in a separate
+            # field from the answer. Left alone it would spend the whole budget
+            # thinking and finish having emitted no content at all - a stream
+            # that completes successfully and says nothing. Low effort is
+            # plenty for "which bin does this go in".
+            extra_body={"reasoning": {"effort": "low"}},
         )
         for chunk in stream:
             if not chunk.choices:
@@ -428,15 +434,21 @@ class Chat:
         yield "meta", {"backend": chosen}
         produced = False
         try:
-            for piece in stream(question):
-                text = piece if isinstance(piece, str) else str(piece)
-                if text:
-                    produced = True
-                    yield "text", text
-        except Exception as exc:
-            print(f"[chat] {chosen} unavailable ({exc})")
+            try:
+                for piece in stream(question):
+                    text = piece if isinstance(piece, str) else str(piece)
+                    if text:
+                        produced = True
+                        yield "text", text
+            except Exception as exc:
+                print(f"[chat] {chosen} failed ({exc})")
+
+            # Falling back on silence as well as on errors. A reasoning model
+            # can finish a stream having emitted only its own thinking, which
+            # is not an exception but is still no answer - the previous version
+            # only recovered from exceptions and returned a blank reply.
             if not produced and use_cloud:
-                # Reaching the cloud failed; the local model is still here.
+                print("[chat] cloud gave nothing, trying the local model")
                 try:
                     for piece in self._local_stream(question):
                         text = piece if isinstance(piece, str) else str(piece)
@@ -444,10 +456,11 @@ class Chat:
                             produced = True
                             yield "text", text
                 except Exception as inner:
-                    print(f"[chat] local unavailable too ({inner})")
+                    print(f"[chat] local failed too ({inner})")
+
             if not produced:
-                # Nothing answered, so say what the router had rather than
-                # showing a blank reply.
+                # Still nothing, so say what the router had rather than showing
+                # an empty message.
                 yield "text", answer
         finally:
             self._model_lock.release()
