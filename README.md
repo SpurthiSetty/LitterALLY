@@ -1,260 +1,289 @@
-# LitterALLY
-This is the github for the Arduino Intern Challenge
+# LitterALLY — a smart bin on the Arduino UNO Q
 
-# TrashTALK - Smart Waste Detection System
+Hold something in front of it. Three seconds later the bin tells you which
+container it belongs in — with a colour, an icon and a tone — and writes what it
+saw to a log you can then ask questions about, in plain English, in a browser.
 
-TrashTALK is an integrated edge-AI system built on the Arduino UNO Q. It uses a Time-of-Flight (ToF) distance sensor and a piezobuzzer on the microcontroller unit (MCU) side to detect when an item is placed in front of the scanner. Upon holding the item in place within 25 cm for 3 seconds, a hardware Bridge signal triggers a Python application running on the Linux Microprocessing Unit (MPU) to activate a USB webcam and stream live video to a Streamlit Web UI.
+Built for the Arduino Intern Challenge on an **Arduino UNO Q (4 GB)**.
 
 ---
 
-## Classification System Instructions
+## The board is two computers
 
-Run the following command to download the quantized pre-trained models
+That is the shape of the whole project, and most of the design follows from it.
 
-```bash
-python3 download_models.py /home/arduino/my_trash_classifier/models
+| | MCU | MPU |
+|---|---|---|
+| Chip | STM32U585 Cortex-M33 | Qualcomm QRB2210, quad Cortex-A53 |
+| Runs | Zephyr, `sketch/sketch.ino` | Debian, Python in a container |
+| Owns | ToF sensor, buzzer, RGB LEDs, LED matrix | USB webcam, model, database, chat |
+
+They talk over the **Arduino Bridge** — MessagePack RPC, both directions.
+
+**The MCU owns everything the user sees.** Linux asks for a display change; the
+MCU decides when and for how long. If the Linux side dies the bin still responds
+— it just shows `unknown` after a four-second timeout. That property is why the
+split is worth the trouble.
+
+The Bridge contract is three calls:
+
+| Call | Direction | Meaning |
+|---|---|---|
+| `on_trigger(mm)` | MCU → MPU | someone held something still; classify it |
+| `set_feedback(index)` | MPU → MCU | show category *index*, 0–5 |
+| `scene_clear()` | MCU → MPU | item withdrawn, drop any pending work |
+
+`on_trigger` returns immediately and does no work — the result comes back later
+as a separate call, so the MCU never blocks on Linux.
+
+---
+
+## What happens when you present something
+
+```
+  distance sensor  ─┐
+   10 Hz, Kalman    │  held 3 s
+                    ▼
+              on_trigger(mm) ──────────────► capture 5 frames
+                                                    │
+                                          MobileNetV2 (wastenet)
+                                                    │
+                                        mean over the 5 frames
+                                                    │
+                                     label ──► disposal_rules.yaml
+                                                    │
+                        SQLite  ◄──── category ─────┤
+                                                    ▼
+                                            set_feedback(index)
+                                                    │
+                                     RGB LEDs + matrix + buzzer
 ```
 
-## System Architecture
+**Distance is filtered, not thresholded.** The ToF sensor drops readings — it
+returns 0 when it has no target — and a raw threshold read one dropped sample as
+a withdrawn item and restarted the three-second hold. A small constant-velocity
+Kalman filter tracks distance *and its rate of change*, so a dropped sample
+coasts on the prediction instead of resetting the state machine. Presence uses
+hysteresis (arm at 45–240 mm, disarm below 25 or above 265) because an item
+resting exactly on a single threshold flips state ten times a second however
+well it is filtered.
 
-[ Modulino Distance ] --(10 Hz)--> [ UNO Q MCU ]
-                                       |
-                      (Hold < 25cm for 3s)
-                                       |
-                               [ Modulino Buzzer ] (Beep!)
-                                       |
-                             Arduino RouterBridge
-                                       |
-                                       v
-                             [ Linux MPU Python ]
-                                       |
-                                (OpenCV V4L2)
-                                       |
-                                       v
-                            [ USB Webcam Feed ]
-                                       |
-                                       v
-                        [ Streamlit UI @ Port 7000 ]
+**Vision returns a label, not a category.** `label → category` lives in
+[`python/disposal_rules.yaml`](python/disposal_rules.yaml), so changing disposal
+policy never means retraining. Five categories, plus `unknown`.
 
----
+**Five frames, not one.** A single frame catches motion blur or an awkward
+angle. The five probability distributions are averaged, so a label has to do
+well across the burst rather than get lucky once. Configurable via
+`SMARTBIN_BURST`.
 
-## Repository Structure
+Measured on the board: **175 ms per frame, 102 MB RSS**, about 0.9 s for a
+five-frame burst against the MCU's 4 s timeout.
 
-TrashTALK/
-├── sketch/
-│   └── sketch.ino       # C++ Sketch running on Zephyr MCU (Distance & Buzzer)
-├── python/
-│   └── main.py          # Python app running on Linux MPU (Bridge, OpenCV, Streamlit)
-├── app.yaml             # App Lab environment configuration
-└── README.md            # System documentation
+### The five categories
 
----
+| Category | Colour | Matrix icon | Tone | Reached by |
+|---|---|---|---|---|
+| `recycle` | blue | **R** | 880 Hz | cardboard, paper, plastic, metal, glass |
+| `compost` | green | **C** | 660 Hz | biological |
+| `trash` | white | bin | 440 Hz | clothes, shoes, trash |
+| `hazardous` | red | **!** | 1320 Hz | battery |
+| `ewaste` | magenta | bolt | 1100 Hz | *chat only — see below* |
+| `unknown` | yellow | **?** | 220 Hz | confidence below 0.50 |
 
-## Setup Instructions for Teammates
+The onboard 13×8 matrix is monochrome, so the icon carries the meaning and the
+two RGB LEDs carry the colour. The order of that table is a contract:
+`set_feedback` sends the row index, and `sketch.ino` holds the matching table.
 
-### 1. Hardware Requirements
-- Board: Arduino UNO Q
-- Sensors & Modules:
-  - Modulino Distance Sensor (Time-of-Flight)
-  - Modulino Buzzer
-- Peripherals:
-  - Standard USB Webcam (plugged into the UNO Q USB Host Port)
-  - Power supply / USB-C connection to your PC
+`ewaste` is deliberately unreachable from the camera — wastenet has no e-waste
+class. It exists so the chatbot can answer "where does a laptop go", which it
+otherwise handed to the language model, which replied *the third bin, with the
+lid closed*.
 
 ---
 
-### 2. Opening the Project in Arduino App Lab
-1. Launch Arduino App Lab.
-2. Connect your UNO Q board via USB/Wi-Fi and ensure it is selected at the bottom bar.
-3. Import or open the TrashTALK project folder.
-4. Add the required brick to the workspace:
-   - In the left panel under Bricks, click "WebUI - Streamlit".
+## The chatbot
+
+Two kinds of question — what this bin has seen, and how to dispose of something
+— answered by whichever of three tiers can handle it. Served at
+`http://<board>:8090`.
+
+| Tier | Speed | Handles |
+|---|---|---|
+| **router** | **0.0 s** | anything in the log or the rules file |
+| **cloud** | ~8 s | the long tail, only if you tick the box |
+| **local** | ~9 s | the long tail, offline and private |
+
+**The router runs first, always.** It pattern-matches the question, calls one of
+four tools over SQLite and the rules file, and formats the result — so the
+number goes from the database to the screen with no step in between that could
+corrupt it. Asked what had been thrown out that day, the local model once
+answered *20 items* when the log held *303*. The router cannot make that
+mistake, and it is instant.
+
+**Cloud and local are alternatives, not escalating tiers.** If cloud is
+permitted and reachable it answers directly; running the 0.8 B local model first
+would add ten seconds on the way to a worse answer. Local is what remains when
+the toggle is off, the key is missing, or the network is down — so the bin
+always answers something. When cloud fails mid-stream the answer is re-labelled
+`local (cloud unavailable)` rather than silently attributed to the wrong model.
+
+**The toggle is about consent, not capability.** The event log never leaves the
+device. Only the question does, and only when you ask for it.
+
+The bin knows where it is — `location` in `disposal_rules.yaml` — so cloud
+answers name real local services instead of saying "check with your council".
+
+Answers stream token by token over newline-delimited JSON, because a nine-second
+wait with a blank screen reads as broken.
 
 ---
 
-### 3. Code Files Setup
+## Layout
 
-#### sketch/sketch.ino
-Ensure your sketch contains the timing and state-machine filtering logic to handle distance detection:
+```
+app.yaml                     App Lab manifest: bricks and published ports
+deploy.sh                    tar-over-ssh push from a laptop to the board
+python/
+  main.py                    orchestrator: trigger → classify → rules → store → feedback
+  vision.py                  camera, burst capture, and the seam into the classifier
+  detector.py                experiments in cropping to the item (off by default)
+  rules.py                   label + confidence → category
+  disposal_rules.yaml        THE disposal policy: labels, aliases, location, floor
+  store.py                   SQLite event log
+  chat.py                    three-tier routing
+  chat_tools.py              what the chatbot is allowed to know
+  chat_server.py             NDJSON streaming server for the chat UI
+  chat_ui.html               the browser front end
+  classification/            TFLite classifier + download_models.py
+sketch/
+  sketch.ino                 state machine, Kalman filter, LEDs, matrix, buzzer
+```
 
-#include "Modulino.h"
-#include <Arduino_RouterBridge.h>
-
-ModulinoDistance distance;
-ModulinoBuzzer buzzer;
-
-const int MIN_DEADZONE_MM = 20;            // 2 cm optical floor limit
-const int DIST_THRESHOLD_MM = 250;         // 25 cm target threshold
-const unsigned long HOLD_TIME_MS = 3000;   // 3 seconds hold requirement
-const unsigned long POLL_INTERVAL_MS = 100; // 10 Hz refresh rate
-
-unsigned long lastPollTime = 0;
-unsigned long targetStartTime = 0;
-bool trackingActive = false;
-bool cameraActive = false;
-
-void setup() {
-    Monitor.begin();
-    delay(1000);
-
-    Modulino.begin();
-    distance.begin();
-    buzzer.begin();
-
-    Monitor.println("====================================");
-    Monitor.println("  SYSTEM READY: CAM + BUZZ + DIST   ");
-    Monitor.println("====================================");
-}
-
-void loop() {
-    unsigned long currentMillis = millis();
-
-    if (currentMillis - lastPollTime >= POLL_INTERVAL_MS) {
-        lastPollTime = currentMillis;
-
-        if (distance.available()) {
-            int raw_mm = distance.get();
-
-            // Ignore invalid 0 mm optical noise glitch
-            if (raw_mm == 0) {
-                return;
-            }
-
-            bool isWithinRange = (raw_mm >= MIN_DEADZONE_MM && raw_mm <= DIST_THRESHOLD_MM);
-
-            if (isWithinRange) {
-                // Hand/object is currently present (< 25 cm)
-                if (!trackingActive) {
-                    // Start the 3-second timer
-                    trackingActive = true;
-                    targetStartTime = currentMillis;
-                    Monitor.println(">>> Target detected! Starting 3s timer... <<<");
-                } 
-                else if ((currentMillis - targetStartTime >= HOLD_TIME_MS) && !cameraActive) {
-                    // 3 seconds passed -> Turn on camera
-                    cameraActive = true;
-                    Monitor.println(">>> 3s HOLD COMPLETE! BEEPING & STARTING CAMERA <<<");
-                    
-                    buzzer.tone(1000, 300); // Audible beep
-                    Bridge.notify("camera_cmd", "START");
-                }
-            } 
-            else {
-                // Object moved out of range (> 25 cm or removed)
-                if (cameraActive) {
-                    // Stop condition: Distance > 25 cm while camera was running
-                    Monitor.println(">>> OBJECT MOVED OUT OF RANGE (>25cm): STOPPING CAMERA <<<");
-                    Bridge.notify("camera_cmd", "STOP");
-                    cameraActive = false;
-                }
-                
-                // Reset tracking state completely
-                trackingActive = false;
-            }
-        }
-    }
-}
-
-
-#### python/main.py
-Paste the following unified MPU controller script:
-
-from arduino.app_utils import App, Bridge
-from arduino.app_bricks.streamlit_ui import st
-import cv2
-import time
-
-camera = None
-camera_active = False
-
-def get_working_camera():
-    """Scans V4L2 device indices to discover and lock the connected USB webcam."""
-    global camera
-    if camera is not None and camera.isOpened():
-        return camera
-    
-    # Common V4L2 device index fallbacks on embedded Linux
-    for idx in [2, 0, 1, 4]:
-        cap = cv2.VideoCapture(idx)
-        if cap.isOpened():
-            ret, frame = cap.read()
-            if ret and frame is not None:
-                print(f"\n>>> USB WEBCAM READY AT INDEX {idx}! <<<\n")
-                camera = cap
-                return camera
-            cap.release()
-    return None
-
-def on_camera_cmd(status):
-    """Bridge handler for notifications from C++ sketch."""
-    global camera_active
-    print(f"\n>>> [PYTHON RECEIVED BRIDGE CMD]: {status} <<<")
-    if status == "START":
-        print(">>> [PYTHON] ACTIVATING CAMERA FEED... <<<")
-        camera_active = True
-    elif status == "STOP":
-        print(">>> [PYTHON] PAUSING CAMERA FEED... <<<\n")
-        camera_active = False
-    return True
-
-# Register Bridge command mapping
-Bridge.provide("camera_cmd", on_camera_cmd)
-
-# --- Streamlit Web Interface Setup ---
-st.title("TrashTALK - Live WebCam Feed")
-
-# Placeholders to prevent duplicate UI re-renders
-status_box = st.empty()
-image_box = st.empty()
-
-# Initialize camera hardware on startup
-camera = get_working_camera()
-
-def loop():
-    global camera, camera_active
-    
-    if camera_active:
-        if camera is None or not camera.isOpened():
-            camera = get_working_camera()
-
-        if camera is not None and camera.isOpened():
-            ret, frame = camera.read()
-            if ret:
-                status_box.success("STATUS: WEBCAM LIVE STREAMING")
-                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                image_box.image(frame_rgb, channels="RGB", use_container_width=True)
-            else:
-                status_box.warning("Camera active, reading frame...")
-    else:
-        status_box.info("Status: Idle — Hold object within 25 cm for 3 seconds to activate camera.")
-        image_box.empty()
-
-    time.sleep(0.05)
-
-App.run(user_loop=loop)
+The `python/` + `sketch/` split and the root `app.yaml` are required by App Lab,
+not decoration.
 
 ---
 
-## How to Run and Test
+## Running it
 
-1. Connect your laptop to the same Wi-Fi network as the UNO Q board.
-2. In Arduino App Lab, click the Run button.
-3. Observe the output in the bottom console tabs:
-   - Python tab: Confirms "USB WEBCAM READY AT INDEX 2!" and Streamlit startup URLs.
-   - Serial Monitor tab: Shows real-time distance measurements from the Modulino Distance sensor.
-4. Open your web browser (Edge, Chrome, or Safari) and go to:
-   http://<BOARD-IP>:7000
-   (e.g., http://192.168.1.89:7000)
-5. Testing the Trigger:
-   - Place an object/hand 2 cm to 25 cm away from the distance sensor.
-   - Keep it held in place for 3 seconds.
-   - The Modulino Buzzer will beep, and the Streamlit UI will update from Idle to "STATUS: WEBCAM LIVE STREAMING" with real-time video!
-   - Pull the object away past 25 cm—the camera feed will stop immediately.
+App Lab edits files **on the board** and keeps no local copy. Either clone into
+`~/ArduinoApps/` on the UNO Q, or work in the repo on a laptop and push with
+`./deploy.sh`.
+
+Once, on the board, fetch the model weights (~20 MB, gitignored):
+
+```bash
+python3 python/classification/download_models.py
+```
+
+Then press **Run** in App Lab. The chat UI is at `http://<board>:8090`.
+
+`python/requirements.txt` pulls `opencv-python-headless`, `pyyaml`, `openai` and
+`ai-edge-litert`. **`tflite-runtime` will not install on this board** — there is
+no wheel for Python 3.13 on aarch64 — so `ai-edge-litert`, Google's continuation
+of it, runs the same `.tflite` files through the same `Interpreter` API.
+
+### The cloud tier
+
+Put an API key in `python/.cloud_key` (gitignored, and `deploy.sh` skips
+dotfiles). It defaults to Google AI Studio's free tier; any OpenAI-compatible
+endpoint works via `SMARTBIN_CLOUD_URL`.
+
+The `arduino:cloud_llm` brick is **commented out** in `app.yaml` on purpose: it
+hard-requires an `Api_key` variable and the app will not load without one,
+appearing unnamed and unstartable in App Lab. Everything behind it — the UI
+toggle, the routing, the fallback — is written and committed.
+
+### Testing the chat without the board
+
+The chat layer is plain Python over SQLite, so it runs on a laptop against a
+copy of the database:
+
+```bash
+scp unoq:'~/ArduinoApps/<project>/python/smartbin.db' /tmp/smartbin.db
+```
+
+```bash
+python3 python/chat_server.py --db /tmp/smartbin.db --port 8090
+```
+
+### Configuration
+
+| Variable | Default | Does |
+|---|---|---|
+| `SMARTBIN_BURST` | `5` | frames per classification |
+| `SMARTBIN_DETECT` | `off` | crop-to-item mode: `off`, `diff`, `yolox` |
+| `SMARTBIN_CLOUD_URL` | Google AI Studio | any OpenAI-compatible endpoint |
+| `SMARTBIN_CLOUD_MODEL` | `gemini-flash-lite-latest` | cloud model id |
+| `SMARTBIN_CLOUD_MAX_TOKENS` | `1024` | cloud response cap |
+
+Model ids are an alias, not a pinned version, because two pinned versions went
+stale during development — one was already retired when it was written down.
 
 ---
 
-## Troubleshooting Guide
+## Things that turned out to matter
 
-- Web UI page shows "Can't reach this page": Ensure you are on the same Wi-Fi network as the UNO Q board and that you appended :7000 to the IP address.
-- Camera stream freezes or doesn't start: Verify the USB webcam is plugged firmly into the board prior to hitting Run. Check the Python tab to verify index discovery (/dev/video2).
-- Timer keeps resetting unexpectedly: Ensure the distance sensor lens is clear. Readings of 0 cm caused by optical contact are filtered in sketch.ino.
+**A `String` parameter never reaches an MCU handler.** `set_feedback("recycle")`
+timed out every single time, so the sketch fell back to its own timeout and
+displayed `unknown` even when the classifier was certain. Zero-argument handlers
+worked fine, which is exactly why the startup handshake succeeded and hid this
+for hours. The category now travels as an integer index.
+
+**`Bridge.notify` does not reach `provide_safe` handlers.** Swapping `call` for
+`notify` to dodge a crash silently removed feedback altogether. The MPU→MCU
+direction is `Bridge.call(..., timeout=2)` inside a `try`, so a dead MCU costs
+two seconds rather than the process.
+
+**The handshake has to repeat.** `mpu_ready` was announced once at startup —
+then reflashing rebooted the MCU, which came up having never heard it. It is now
+re-announced every 5 seconds, so the two sides resynchronise no matter which one
+restarts.
+
+**An AA battery is 6% of the frame.** It classified as `paper` — from the white
+counter behind it — while the same battery filling a phone screen scored 0.99.
+The model was never wrong about batteries; it was being shown a kitchen. A
+classifier labels the whole image and pools features across all of it, so
+whatever dominates the frame dominates the answer. **Presentation moved results
+more than any model or preprocessing change.**
+
+**Cropping to fix that made it worse.** A distance-scaled centre crop cut the
+object out — the banana already filled the frame. Background subtraction found
+the largest thing that changed, which is always the hand, because fingers touch
+the item and become one connected region. Both paths are still in
+`detector.py`, switched off, with what they measured written down.
+
+**Only a square crop survived.** 640×480 → 480×480 before the resize to the
+model's square input, which removes the aspect distortion without removing any
+of the subject. That one stayed.
+
+**A confidence floor of 0.65 was rejecting correct answers** about half the
+time. Real items measured between 0.44 and 0.92, empty scenes between 0.30 and
+0.60. The floor is 0.50 — the overlap is real, and no threshold separates them
+cleanly.
+
+**Softmax over an already-softmaxed output flattens everything.** The quantized
+model emits probabilities, not logits; softmaxing them a second time drove every
+class to 1/N ≈ 0.001. Quantized outputs are renormalised, float logits are
+softmaxed, and nothing gets both.
+
+**Labels are model vocabulary, not human vocabulary.** Nobody asks which bin
+`biological` goes in, so "where does a banana go" fell straight through to the
+language model, which said recycle. It is compost. `disposal_rules.yaml` now
+carries an alias table, and it is correctness rather than convenience.
+
+**Free tiers are shared pools.** The cloud path took 3 s, then 36 s, then 68 s
+for the same question. Three models were swapped chasing it before the
+provider's own error named the cause: `429 — limit_source:
+upstream_provider_shared_pool`. Moving to a provider with a per-key quota fixed
+what changing models could not.
+
+---
+
+## Hardware
+
+- Arduino UNO Q (4 GB)
+- Modulino Distance (ToF) and Modulino Buzzer, on the Qwiic bus — **MCU side**
+- USB webcam, 640×480 — **MPU side**; the MCU cannot reach it
+- Onboard 13×8 monochrome LED matrix and 2 MCU-driven RGB LEDs
