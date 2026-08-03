@@ -110,16 +110,16 @@ Two kinds of question — what this bin has seen, and how to dispose of somethin
 
 | Tier | Speed | Handles |
 |---|---|---|
-| **router** | **0.0 s** | anything in the log or the rules file |
+| **offline** | **0.0 s** | anything in the log or the rules file, no model at all |
 | **cloud** | ~8 s | the long tail, only if you tick the box |
-| **local** | ~9 s | the long tail, offline and private |
+| **local** | ~9 s | the long tail, on-device |
 
-**The router runs first, always.** It pattern-matches the question, calls one of
-four tools over SQLite and the rules file, and formats the result — so the
-number goes from the database to the screen with no step in between that could
-corrupt it. Asked what had been thrown out that day, the local model once
-answered *20 items* when the log held *303*. The router cannot make that
-mistake, and it is instant.
+**The offline tier runs first, always.** It pattern-matches the question, calls
+one of four tools over SQLite and the rules file, and formats the result — so
+the number goes from the database to the screen with no step in between that
+could corrupt it. Asked what had been thrown out that day, the local model once
+answered *20 items* when the log held *303*. A tier with no model in it cannot
+make that mistake, and it is instant.
 
 **Cloud and local are alternatives, not escalating tiers.** If cloud is
 permitted and reachable it answers directly; running the 0.8 B local model first
@@ -220,64 +220,6 @@ python3 python/chat_server.py --db /tmp/smartbin.db --port 8090
 
 Model ids are an alias, not a pinned version, because two pinned versions went
 stale during development — one was already retired when it was written down.
-
----
-
-## Things that turned out to matter
-
-**A `String` parameter never reaches an MCU handler.** `set_feedback("recycle")`
-timed out every single time, so the sketch fell back to its own timeout and
-displayed `unknown` even when the classifier was certain. Zero-argument handlers
-worked fine, which is exactly why the startup handshake succeeded and hid this
-for hours. The category now travels as an integer index.
-
-**`Bridge.notify` does not reach `provide_safe` handlers.** Swapping `call` for
-`notify` to dodge a crash silently removed feedback altogether. The MPU→MCU
-direction is `Bridge.call(..., timeout=2)` inside a `try`, so a dead MCU costs
-two seconds rather than the process.
-
-**The handshake has to repeat.** `mpu_ready` was announced once at startup —
-then reflashing rebooted the MCU, which came up having never heard it. It is now
-re-announced every 5 seconds, so the two sides resynchronise no matter which one
-restarts.
-
-**An AA battery is 6% of the frame.** It classified as `paper` — from the white
-counter behind it — while the same battery filling a phone screen scored 0.99.
-The model was never wrong about batteries; it was being shown a kitchen. A
-classifier labels the whole image and pools features across all of it, so
-whatever dominates the frame dominates the answer. **Presentation moved results
-more than any model or preprocessing change.**
-
-**Cropping to fix that made it worse.** A distance-scaled centre crop cut the
-object out — the banana already filled the frame. Background subtraction found
-the largest thing that changed, which is always the hand, because fingers touch
-the item and become one connected region. Both paths are still in
-`detector.py`, switched off, with what they measured written down.
-
-**Only a square crop survived.** 640×480 → 480×480 before the resize to the
-model's square input, which removes the aspect distortion without removing any
-of the subject. That one stayed.
-
-**A confidence floor of 0.65 was rejecting correct answers** about half the
-time. Real items measured between 0.44 and 0.92, empty scenes between 0.30 and
-0.60. The floor is 0.50 — the overlap is real, and no threshold separates them
-cleanly.
-
-**Softmax over an already-softmaxed output flattens everything.** The quantized
-model emits probabilities, not logits; softmaxing them a second time drove every
-class to 1/N ≈ 0.001. Quantized outputs are renormalised, float logits are
-softmaxed, and nothing gets both.
-
-**Labels are model vocabulary, not human vocabulary.** Nobody asks which bin
-`biological` goes in, so "where does a banana go" fell straight through to the
-language model, which said recycle. It is compost. `disposal_rules.yaml` now
-carries an alias table, and it is correctness rather than convenience.
-
-**Free tiers are shared pools.** The cloud path took 3 s, then 36 s, then 68 s
-for the same question. Three models were swapped chasing it before the
-provider's own error named the cause: `429 — limit_source:
-upstream_provider_shared_pool`. Moving to a provider with a per-key quota fixed
-what changing models could not.
 
 ---
 
