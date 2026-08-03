@@ -1,10 +1,7 @@
-# LitterALLY — a smart bin on the Arduino UNO Q
+# LitterALLY: a smart bin built with Arduino UNO Q
 
-Hold something in front of it. Three seconds later the bin tells you which
-container it belongs in — with a colour, an icon and a tone — and writes what it
-saw to a log you can then ask questions about, in plain English, in a browser.
-
-Built for the Arduino Intern Challenge on an **Arduino UNO Q (4 GB)**.
+Hold an item in front of the bin, and within three seconds it identifies the correct waste stream. A color, icon, and buzzer guide the user, while every classification is recorded in a log. Through a browser-based interface, you can then ask questions about what the bin has seen using plain English.
+Built for the Arduino Intern Challenge on an Arduino UNO Q (4 GB).
 
 ---
 
