@@ -1,11 +1,19 @@
 # LitterALLY
-This is the goithub for the Arduino INtern s Challenge 
+This is the github for the Arduino Intern Challenge
 
 # TrashTALK - Smart Waste Detection System
 
 TrashTALK is an integrated edge-AI system built on the Arduino UNO Q. It uses a Time-of-Flight (ToF) distance sensor and a piezobuzzer on the microcontroller unit (MCU) side to detect when an item is placed in front of the scanner. Upon holding the item in place within 25 cm for 3 seconds, a hardware Bridge signal triggers a Python application running on the Linux Microprocessing Unit (MPU) to activate a USB webcam and stream live video to a Streamlit Web UI.
 
 ---
+
+## Classification System Instructions
+
+Run the following command to download the quantized pre-trained models
+
+```bash
+python3 download_models.py /home/arduino/my_trash_classifier/models
+```
 
 ## System Architecture
 
